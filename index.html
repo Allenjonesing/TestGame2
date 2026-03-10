@@ -414,7 +414,11 @@ class EcologySystem {
       if (tile===TILES.ASH && game.rng()<0.01) { world.set(x,y,TILES.PLAINS); }
       else if (tile===TILES.PLAINS && game.rng()<0.005 && this.hasAdj(world,x,y,TILES.FOREST)) { world.set(x,y,TILES.FOREST); }
       else if (tile===TILES.SHALLOW && game.rng()<0.003 && this.hasAdj(world,x,y,TILES.SWAMP)) { world.set(x,y,TILES.SWAMP); }
-      else if (tile===TILES.ICE && game.rng()<0.005 && game.weather.current!=='blizzard') { world.set(x,y,TILES.SHALLOW); }
+      else if (tile===TILES.ICE && game.rng()<0.005 && game.weather.current!=='blizzard') {
+        // Melt to plains if adjacent plains exist, otherwise shallow water
+        const meltTo = this.hasAdj(world,x,y,TILES.PLAINS) ? TILES.PLAINS : TILES.SHALLOW;
+        world.set(x,y,meltTo);
+      }
     }
   }
   hasAdj(world,x,y,type) {
@@ -734,7 +738,7 @@ class EntropyEngine {
     if (effect==='gravity') {
       this.gravityChaos=5; game.invertedGravity=true;
       game.addMessage('⚠ REALITY GLITCH: Gravity inverts!');
-      setTimeout(()=>{ game.invertedGravity=false; },5*CONFIG.SIM_INTERVAL);
+      setTimeout(()=>{ if (game.state!=='GAMEOVER') game.invertedGravity=false; },5*CONFIG.SIM_INTERVAL);
     } else if (effect==='tiles') {
       const sw=[TILES.PLAINS,TILES.FOREST,TILES.SWAMP,TILES.DESERT];
       for (let i=0; i<5; i++) {
@@ -749,7 +753,7 @@ class EntropyEngine {
         const fc=ecs.getComponent(npc,'FactionComp');
         if (fc) {
           const orig=fc.factionId; fc.factionId=-1;
-          setTimeout(()=>{ const fc2=ecs.getComponent(npc,'FactionComp'); if (fc2) fc2.factionId=orig; },10*CONFIG.SIM_INTERVAL);
+          setTimeout(()=>{ if (game.state!=='GAMEOVER') { const fc2=ecs.getComponent(npc,'FactionComp'); if (fc2) fc2.factionId=orig; } },10*CONFIG.SIM_INTERVAL);
         }
       }
       game.addMessage('⚠ REALITY GLITCH: Allegiances blur!');
@@ -1320,7 +1324,7 @@ function showTitle() {
       <p style="color:#cc88ff;font-size:15px;margin:6px 0;">A Roguelike Simulation of Emergent Chaos</p>
       <br>
       <p>Enter seed (leave blank for random):</p>
-      <input type="number" id="seedInput" placeholder="random seed" min="1">
+      <input type="number" id="seedInput" placeholder="random seed" min="0">
       <br><br>
       <button onclick="startNewRun(parseInt(document.getElementById('seedInput').value)||0)">&#9654; START NEW RUN</button>
       <br><br>
