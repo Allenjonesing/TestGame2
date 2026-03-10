@@ -47,6 +47,7 @@ const CONFIG = {
   MAX_NPCS: 60,
   ENTROPY_CHAOS_THRESHOLD: 80,
   ENTROPY_SURGE_THRESHOLD: 100,
+  FACTION_BLUR_DURATION: 10, // ticks a faction-blur reality glitch lasts
 };
 
 // === SEEDED RNG ===
@@ -769,7 +770,7 @@ class EntropyEngine {
         const fc=ecs.getComponent(npc,'FactionComp');
         if (fc) {
           // Schedule restoration via tick-based system (avoids setTimeout race conditions)
-          this.pendingFactionBlurs.push({ eid: npc, origFaction: fc.factionId, endTick: game.tick+10 });
+          this.pendingFactionBlurs.push({ eid: npc, origFaction: fc.factionId, endTick: game.tick+CONFIG.FACTION_BLUR_DURATION });
           fc.factionId=-1;
         }
       }
@@ -1311,6 +1312,7 @@ const gameState={state:'TITLE',game:null,runNumber:0,simInterval:null};
 
 function startNewRun(seed) {
   gameState.runNumber++;
+  // Truncate timestamp to 32 bits to keep seed within the range expected by mulberry32
   const actualSeed=(seed!==null&&seed!==undefined&&!isNaN(seed))?seed:(Date.now()&0xffffffff);
   try { gameState.game=new Game(actualSeed); } catch(err) { console.error('Game init error:',err); return; }
   gameState.state='PLAYING'; hideOverlay();
@@ -1343,7 +1345,7 @@ function showTitle() {
       <p>Enter seed (leave blank for random):</p>
       <input type="number" id="seedInput" placeholder="random seed" min="0">
       <br><br>
-      <button onclick="const v=document.getElementById('seedInput').value; startNewRun(v!==''?parseInt(v):null)">&#9654; START NEW RUN</button>
+      <button id="btnStartRun">&#9654; START NEW RUN</button>
       <br><br>
       ${scores.length>0?'<p style="color:#664499;margin-bottom:4px;font-size:12px;">HIGH SCORES:</p>'+sh:''}
       <br>
@@ -1351,10 +1353,15 @@ function showTitle() {
     </div>`;
   document.getElementById('overlay').style.display='flex';
   gameState.state='TITLE';
+  document.getElementById('btnStartRun').addEventListener('click', function() {
+    const v = document.getElementById('seedInput').value;
+    startNewRun(v !== '' ? parseInt(v, 10) : null);
+  });
 }
 
 function showGameOver() {
   const game=gameState.game; if (!game) return;
+  const gameSeed=game.seed;
   document.getElementById('overlay').innerHTML=`
     <div class="overlay-box">
       <h2>&#9889; YOU HAVE FALLEN &#9889;</h2>
@@ -1363,13 +1370,16 @@ function showGameOver() {
       <p>Ticks Survived: <span style="color:#cc88ff">${game.tick}</span></p>
       <p>Events Witnessed: <span style="color:#cc88ff">${game.events.eventHistory.length}</span></p>
       <p>Entropy at Death: <span style="color:#ff8800">${Math.floor(game.entropy)}%</span></p>
-      <p>Seed: <span style="color:#664499">${game.seed}</span></p>
+      <p>Seed: <span style="color:#664499">${gameSeed}</span></p>
       <br>
-      <button onclick="startNewRun(0)">&#8634; New Run</button>
-      <button onclick="startNewRun(${game.seed})">&#8634; Same Seed</button>
-      <button onclick="showTitle()">&#8962; Title</button>
+      <button id="btnNewRun">&#8634; New Run</button>
+      <button id="btnSameSeed">&#8634; Same Seed</button>
+      <button id="btnTitle">&#8962; Title</button>
     </div>`;
   document.getElementById('overlay').style.display='flex';
+  document.getElementById('btnNewRun').addEventListener('click', () => startNewRun(null));
+  document.getElementById('btnSameSeed').addEventListener('click', () => startNewRun(gameSeed));
+  document.getElementById('btnTitle').addEventListener('click', showTitle);
 }
 
 function showHelp() {
@@ -1395,9 +1405,10 @@ function showHelp() {
       <p style="color:#ccaa44;font-weight:bold;">ENTROPY METER</p>
       <p>Rises when world is stable. At 80%: minor chaos. At 100%: SURGE!</p>
       <br>
-      <button onclick="hideOverlay()" style="width:100%;margin-top:8px;">CLOSE [Esc]</button>
+      <button id="btnCloseHelp" style="width:100%;margin-top:8px;">CLOSE [Esc]</button>
     </div>`;
   document.getElementById('overlay').style.display='flex';
+  document.getElementById('btnCloseHelp').addEventListener('click', hideOverlay);
 }
 
 function hideOverlay() { document.getElementById('overlay').style.display='none'; }
