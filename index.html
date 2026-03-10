@@ -683,7 +683,11 @@ class PlayerSystem {
 
 // === ENTROPY ENGINE ===
 class EntropyEngine {
-  constructor() { this.gravityChaos=0; }
+  constructor() {
+    this.gravityChaos=0;
+    // Track pending faction blur effects: [{eid, origFaction, endTick}]
+    this.pendingFactionBlurs=[];
+  }
   update(game,ecs,world) {
     const fires=this.countFires(world);
     const activeEvents=game.events.activeEvents.length;
@@ -694,7 +698,20 @@ class EntropyEngine {
     if (game.entropy>=CONFIG.ENTROPY_CHAOS_THRESHOLD&&game.rng()<0.1) this.minorChaos(game,ecs,world);
     if (game.entropy>=CONFIG.ENTROPY_SURGE_THRESHOLD) { game.entropy=0; this.entropySurge(game,ecs,world); }
     if (game.entropy>60&&game.rng()<0.05) this.realityGlitch(game,ecs,world);
-    if (this.gravityChaos>0) { this.gravityChaos--; if (this.gravityChaos===0) game.addMessage('Reality stabilizes.'); }
+    // Tick-based gravity chaos countdown
+    if (this.gravityChaos>0) {
+      this.gravityChaos--;
+      if (this.gravityChaos===0) { game.invertedGravity=false; game.addMessage('Reality stabilizes.'); }
+    }
+    // Tick-based faction blur restoration
+    for (let i=this.pendingFactionBlurs.length-1;i>=0;i--) {
+      const blur=this.pendingFactionBlurs[i];
+      if (game.tick>=blur.endTick) {
+        const fc=ecs.getComponent(blur.eid,'FactionComp');
+        if (fc) fc.factionId=blur.origFaction;
+        this.pendingFactionBlurs.splice(i,1);
+      }
+    }
   }
   countFires(world) {
     let n=0; for (let i=0; i<world.tiles.length; i++) if (world.tiles[i]===TILES.FIRE) n++; return n;
@@ -738,7 +755,6 @@ class EntropyEngine {
     if (effect==='gravity') {
       this.gravityChaos=5; game.invertedGravity=true;
       game.addMessage('⚠ REALITY GLITCH: Gravity inverts!');
-      setTimeout(()=>{ if (game.state!=='GAMEOVER') game.invertedGravity=false; },5*CONFIG.SIM_INTERVAL);
     } else if (effect==='tiles') {
       const sw=[TILES.PLAINS,TILES.FOREST,TILES.SWAMP,TILES.DESERT];
       for (let i=0; i<5; i++) {
@@ -752,8 +768,9 @@ class EntropyEngine {
         const npc=npcs[Math.floor(game.rng()*npcs.length)];
         const fc=ecs.getComponent(npc,'FactionComp');
         if (fc) {
-          const orig=fc.factionId; fc.factionId=-1;
-          setTimeout(()=>{ if (game.state!=='GAMEOVER') { const fc2=ecs.getComponent(npc,'FactionComp'); if (fc2) fc2.factionId=orig; } },10*CONFIG.SIM_INTERVAL);
+          // Schedule restoration via tick-based system (avoids setTimeout race conditions)
+          this.pendingFactionBlurs.push({ eid: npc, origFaction: fc.factionId, endTick: game.tick+10 });
+          fc.factionId=-1;
         }
       }
       game.addMessage('⚠ REALITY GLITCH: Allegiances blur!');
@@ -824,8 +841,8 @@ class Renderer {
       const b=parseInt(info.color.slice(5,7),16);
       ctx.fillStyle='rgb('+Math.floor(r*lf)+','+Math.floor(g*lf)+','+Math.floor(b*lf)+')';
       ctx.fillRect(px,py,CONFIG.TILE_SIZE,CONFIG.TILE_SIZE);
-      const lr=Math.min(255,r+60), lg2=Math.min(255,g+60), lb=Math.min(255,b+60);
-      ctx.fillStyle='rgb('+Math.floor(lr*lf)+','+Math.floor(lg2*lf)+','+Math.floor(lb*lf)+')';
+      const lr=Math.min(255,r+60), lg=Math.min(255,g+60), lb=Math.min(255,b+60);
+      ctx.fillStyle='rgb('+Math.floor(lr*lf)+','+Math.floor(lg*lf)+','+Math.floor(lb*lf)+')';
       ctx.fillText(info.sym,px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
     }
     const sorted=[...ecs.getEntitiesWith('Position','Render')].sort((a,b)=>{
@@ -1194,8 +1211,8 @@ class Game {
     if (this.rng()<0.05) {
       const items=['wood','stone','iron'];
       const item=items[Math.floor(this.rng()*items.length)];
-      const inv2=this.ecs.getComponent(this.playerId,'Inventory');
-      if (inv2) { inv2.add(item); this.addMessage('Found '+item+'!'); }
+      const playerInventory=this.ecs.getComponent(this.playerId,'Inventory');
+      if (playerInventory) { playerInventory.add(item); this.addMessage('Found '+item+'!'); }
     }
   }
 }
@@ -1294,7 +1311,7 @@ const gameState={state:'TITLE',game:null,runNumber:0,simInterval:null};
 
 function startNewRun(seed) {
   gameState.runNumber++;
-  const actualSeed=(seed>0)?seed:(Date.now()&0xffffffff);
+  const actualSeed=(seed!==null&&seed!==undefined&&!isNaN(seed))?seed:(Date.now()&0xffffffff);
   try { gameState.game=new Game(actualSeed); } catch(err) { console.error('Game init error:',err); return; }
   gameState.state='PLAYING'; hideOverlay();
   if (gameState.simInterval) clearInterval(gameState.simInterval);
@@ -1326,7 +1343,7 @@ function showTitle() {
       <p>Enter seed (leave blank for random):</p>
       <input type="number" id="seedInput" placeholder="random seed" min="0">
       <br><br>
-      <button onclick="startNewRun(parseInt(document.getElementById('seedInput').value)||0)">&#9654; START NEW RUN</button>
+      <button onclick="const v=document.getElementById('seedInput').value; startNewRun(v!==''?parseInt(v):null)">&#9654; START NEW RUN</button>
       <br><br>
       ${scores.length>0?'<p style="color:#664499;margin-bottom:4px;font-size:12px;">HIGH SCORES:</p>'+sh:''}
       <br>
