@@ -1,137 +1,1433 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<style>
-canvas {
-    border:1px solid #d3d3d3;
-    background-color: #f1f1f1;
-}
-</style>
+  <meta charset="UTF-8">
+  <title>Entropy Engine</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#000; color:#fff; font-family:monospace; overflow:hidden; }
+    #container { display:flex; flex-direction:column; }
+    #gameRow { display:flex; }
+    #gameCanvas { display:block; }
+    #panelCanvas { display:block; }
+    #bottomBar { background:#0a0a12; border-top:1px solid #333; padding:6px 10px; font-size:11px; color:#888; white-space:nowrap; }
+    #overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.88); display:flex; align-items:center; justify-content:center; z-index:50; }
+    .overlay-box { background:#0a0a18; border:1px solid #664499; padding:30px 40px; text-align:center; min-width:400px; max-width:600px; }
+    .overlay-box h2 { color:#cc88ff; font-size:22px; margin-bottom:10px; }
+    .overlay-box p { color:#aaa; margin:5px 0; font-size:13px; }
+    .overlay-box input { background:#111; border:1px solid #555; color:#fff; padding:5px 10px; margin:10px 0; font-family:monospace; width:200px; text-align:center; font-size:14px; }
+    .overlay-box button { background:#332255; border:1px solid #664499; color:#cc88ff; padding:8px 20px; margin:5px; cursor:pointer; font-family:monospace; font-size:13px; }
+    .overlay-box button:hover { background:#443366; }
+    .overlay-box pre { color:#7744aa; font-size:10px; line-height:1.3; text-align:left; display:inline-block; }
+    .score-entry { color:#88aacc; font-size:12px; margin:2px 0; }
+  </style>
 </head>
-<body onload="startGame()">
+<body>
+<div id="container">
+  <div id="gameRow">
+    <canvas id="gameCanvas"></canvas>
+    <canvas id="panelCanvas"></canvas>
+  </div>
+  <div id="bottomBar">
+    [WASD/Arrows] Move &nbsp;|&nbsp; [E] Interact &nbsp;|&nbsp; [C] Craft &nbsp;|&nbsp; [1-4] Abilities &nbsp;|&nbsp; [M] Map &nbsp;|&nbsp; [P] Pause &nbsp;|&nbsp; [/] Help
+  </div>
+</div>
+<div id="overlay"></div>
 <script>
+'use strict';
 
-var myGamePiece;
-var myObstacles = [];
-var myScore;
+// === CONFIG ===
+const CONFIG = {
+  WORLD_W: 100, WORLD_H: 70,
+  TILE_SIZE: 16,
+  VIEW_W: 50, VIEW_H: 32,
+  CANVAS_W: 800, CANVAS_H: 512,
+  PANEL_W: 260,
+  SIM_INTERVAL: 300,
+  MAX_NPCS: 60,
+  ENTROPY_CHAOS_THRESHOLD: 80,
+  ENTROPY_SURGE_THRESHOLD: 100,
+  FACTION_BLUR_DURATION: 10, // ticks a faction-blur reality glitch lasts
+};
 
-function startGame() {
-    myGamePiece = new component(30, 30, "red", 10, 120);
-    myGamePiece.gravity = 0.05;
-    myScore = new component("30px", "Consolas", "black", 280, 40, "text");
-    myGameArea.start();
+// === SEEDED RNG ===
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
 }
 
-var myGameArea = {
-    canvas : document.createElement("canvas"),
-    start : function() {
-        this.canvas.width = 480;
-        this.canvas.height = 270;
-        this.context = this.canvas.getContext("2d");
-        document.body.insertBefore(this.canvas, document.body.childNodes[0]);
-        this.frameNo = 0;
-        this.interval = setInterval(updateGameArea, 20);
-        },
-    clear : function() {
-        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+// === ECS CORE ===
+class ECS {
+  constructor() {
+    this.nextId = 1;
+    this.entities = new Map();
+    this.systems = [];
+  }
+  createEntity() {
+    const id = this.nextId++;
+    this.entities.set(id, { id, components: new Map() });
+    return id;
+  }
+  addComponent(entityId, name, component) {
+    const e = this.entities.get(entityId);
+    if (e) e.components.set(name, component);
+  }
+  getComponent(entityId, name) {
+    const e = this.entities.get(entityId);
+    return e ? (e.components.get(name) || null) : null;
+  }
+  removeEntity(entityId) { this.entities.delete(entityId); }
+  getEntitiesWith(...names) {
+    const result = [];
+    for (const [id, e] of this.entities) {
+      if (names.every(n => e.components.has(n))) result.push(id);
     }
+    return result;
+  }
+  addSystem(system) { this.systems.push(system); }
+  update(dt, world) { for (const s of this.systems) s.update(dt, world); }
 }
 
-function component(width, height, color, x, y, type) {
-    this.type = type;
-    this.score = 0;
-    this.width = width;
-    this.height = height;
-    this.speedX = 0;
-    this.speedY = 0;    
-    this.x = x;
-    this.y = y;
-    this.gravity = 0;
-    this.gravitySpeed = 0;
-    this.update = function() {
-        ctx = myGameArea.context;
-        if (this.type == "text") {
-            ctx.font = this.width + " " + this.height;
-            ctx.fillStyle = color;
-            ctx.fillText(this.text, this.x, this.y);
-        } else {
-            ctx.fillStyle = color;
-            ctx.fillRect(this.x, this.y, this.width, this.height);
+// === COMPONENTS ===
+function PositionComponent(x, y) { return { x, y }; }
+function HealthComponent(hp, maxHp) { return { hp, maxHp }; }
+function EnergyComponent(energy, maxEnergy) { return { energy, maxEnergy }; }
+function AIComponent(type) { return { type, state: 'idle', goal: null, memory: [], path: [] }; }
+function FactionComponent(factionId) { return { factionId }; }
+function RenderComponent(symbol, color) { return { symbol, color }; }
+function PlayerComponent() { return { abilities: [null, null, null, null] }; }
+function InventoryComponent() {
+  const items = {};
+  return {
+    items,
+    add(item, count = 1) { items[item] = (items[item] || 0) + count; },
+    remove(item, count = 1) {
+      if (items[item]) { items[item] -= count; if (items[item] <= 0) delete items[item]; }
+    },
+    count(item) { return items[item] || 0; },
+    list() { return Object.entries(items); }
+  };
+}
+function FireComponent(intensity) { return { intensity, age: 0 }; }
+function MachineComponent(type) { return { type, active: true, power: 100 }; }
+
+// === TILES ===
+const TILES = {
+  PLAINS: 0, FOREST: 1, MOUNTAIN: 2, HILLS: 3, WATER: 4,
+  SHALLOW: 5, DESERT: 6, SWAMP: 7, RUINS: 8, SETTLEMENT: 9,
+  ANOMALY: 10, FIRE: 11, ASH: 12, ICE: 13, ROAD: 14
+};
+
+const TILE_INFO = [
+  { name: 'PLAINS',     sym: '.',  color: '#2a5020', passable: true,  flammable: false, slow: false },
+  { name: 'FOREST',     sym: 'T',  color: '#1a3a18', passable: true,  flammable: true,  slow: false },
+  { name: 'MOUNTAIN',   sym: '^',  color: '#5a5a5a', passable: false, flammable: false, slow: false },
+  { name: 'HILLS',      sym: 'n',  color: '#4a4a30', passable: true,  flammable: false, slow: false },
+  { name: 'WATER',      sym: '~',  color: '#1a3060', passable: false, flammable: false, slow: false },
+  { name: 'SHALLOW',    sym: ',',  color: '#2a4a80', passable: true,  flammable: false, slow: true  },
+  { name: 'DESERT',     sym: ':',  color: '#9a8040', passable: true,  flammable: false, slow: false },
+  { name: 'SWAMP',      sym: '%',  color: '#2a4028', passable: true,  flammable: false, slow: true  },
+  { name: 'RUINS',      sym: '#',  color: '#4a3030', passable: true,  flammable: false, slow: false },
+  { name: 'SETTLEMENT', sym: 'S',  color: '#8a6040', passable: true,  flammable: false, slow: false },
+  { name: 'ANOMALY',    sym: '?',  color: '#7a20a0', passable: true,  flammable: false, slow: false },
+  { name: 'FIRE',       sym: 'f',  color: '#cc4400', passable: true,  flammable: false, slow: false, damaging: true },
+  { name: 'ASH',        sym: 'a',  color: '#3a3a3a', passable: true,  flammable: false, slow: false },
+  { name: 'ICE',        sym: '*',  color: '#aaccee', passable: true,  flammable: false, slow: true  },
+  { name: 'ROAD',       sym: '=',  color: '#6a5040', passable: true,  flammable: false, slow: false, fast: true },
+];
+
+// === WORLD GENERATOR ===
+class WorldGenerator {
+  constructor(seed) {
+    this.rng = mulberry32(seed);
+    this.seed = seed;
+  }
+
+  generate() {
+    const W = CONFIG.WORLD_W, H = CONFIG.WORLD_H;
+    const map = new Uint8Array(W * H);
+    const settlements = [], ruins = [], anomalies = [];
+
+    const n1 = this.generateNoise(W, H);
+    const n2 = this.generateNoise(W, H);
+    const combined = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) combined[i] = n1[i] * 0.65 + n2[i] * 0.35;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const v = combined[y * W + x];
+        let tile;
+        if      (v < 0.18) tile = TILES.WATER;
+        else if (v < 0.26) tile = TILES.SHALLOW;
+        else if (v < 0.33) tile = TILES.SWAMP;
+        else if (v < 0.45) tile = TILES.PLAINS;
+        else if (v < 0.57) tile = TILES.FOREST;
+        else if (v < 0.63) tile = TILES.PLAINS;
+        else if (v < 0.70) tile = TILES.DESERT;
+        else if (v < 0.80) tile = TILES.HILLS;
+        else if (v < 0.90) tile = TILES.HILLS;
+        else               tile = TILES.MOUNTAIN;
+        map[y * W + x] = tile;
+      }
+    }
+
+    const temp = new Uint8Array(map);
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        if (map[y * W + x] === TILES.WATER) {
+          const nb = [map[(y-1)*W+x], map[(y+1)*W+x], map[y*W+(x-1)], map[y*W+(x+1)]];
+          if (nb.filter(t => t === TILES.WATER || t === TILES.SHALLOW).length < 2)
+            temp[y * W + x] = TILES.PLAINS;
         }
+      }
     }
-    this.newPos = function() {
-        this.gravitySpeed += this.gravity;
-        this.x += this.speedX;
-        this.y += this.speedY + this.gravitySpeed;
-        this.hitBottom();
-    }
-    this.hitBottom = function() {
-        var rockbottom = myGameArea.canvas.height - this.height;
-        if (this.y > rockbottom) {
-            this.y = rockbottom;
-            this.gravitySpeed = 0;
+    map.set(temp);
+
+    const world = {
+      tiles: map, settlements, ruins, anomalies,
+      get(x, y) { return map[y * CONFIG.WORLD_W + x]; },
+      set(x, y, t) { map[y * CONFIG.WORLD_W + x] = t; },
+      inBounds(x, y) { return x >= 0 && y >= 0 && x < CONFIG.WORLD_W && y < CONFIG.WORLD_H; }
+    };
+
+    // Settlements (4-6)
+    const numS = 4 + Math.floor(this.rng() * 3);
+    for (let i = 0; i < numS; i++) {
+      let sx, sy, att = 0;
+      do {
+        sx = 5 + Math.floor(this.rng() * (W - 10));
+        sy = 5 + Math.floor(this.rng() * (H - 10));
+        att++;
+      } while (att < 100 && (map[sy*W+sx] === TILES.WATER || map[sy*W+sx] === TILES.MOUNTAIN));
+      if (att < 100) {
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = sx+dx, ny = sy+dy;
+            if (world.inBounds(nx,ny) && map[ny*W+nx] !== TILES.WATER) map[ny*W+nx] = TILES.PLAINS;
+          }
+        map[sy*W+sx] = TILES.SETTLEMENT;
+        settlements.push({ x: sx, y: sy });
+        if (settlements.length > 1) {
+          const prev = settlements[settlements.length - 2];
+          this.drawRoad(world, sx, sy, prev.x, prev.y);
         }
+      }
     }
-    this.crashWith = function(otherobj) {
-        var myleft = this.x;
-        var myright = this.x + (this.width);
-        var mytop = this.y;
-        var mybottom = this.y + (this.height);
-        var otherleft = otherobj.x;
-        var otherright = otherobj.x + (otherobj.width);
-        var othertop = otherobj.y;
-        var otherbottom = otherobj.y + (otherobj.height);
-        var crash = true;
-        if ((mybottom < othertop) || (mytop > otherbottom) || (myright < otherleft) || (myleft > otherright)) {
-            crash = false;
+
+    // Ruins (3-8)
+    const numR = 3 + Math.floor(this.rng() * 6);
+    for (let i = 0; i < numR; i++) {
+      let rx, ry, att = 0;
+      do {
+        rx = Math.floor(this.rng() * W);
+        ry = Math.floor(this.rng() * H);
+        att++;
+      } while (att < 50 && (map[ry*W+rx] === TILES.WATER || map[ry*W+rx] === TILES.MOUNTAIN));
+      if (att < 50) {
+        const sz = 2 + Math.floor(this.rng() * 4);
+        for (let dy = -sz; dy <= sz; dy++)
+          for (let dx = -sz; dx <= sz; dx++)
+            if (Math.abs(dx)+Math.abs(dy) <= sz) {
+              const nx = rx+dx, ny = ry+dy;
+              if (world.inBounds(nx,ny) && map[ny*W+nx] !== TILES.WATER && this.rng() < 0.6)
+                map[ny*W+nx] = TILES.RUINS;
+            }
+        ruins.push({ x: rx, y: ry });
+      }
+    }
+
+    // Anomalies (2-4)
+    const numA = 2 + Math.floor(this.rng() * 3);
+    for (let i = 0; i < numA; i++) {
+      let ax, ay, att = 0;
+      do {
+        ax = Math.floor(this.rng() * W);
+        ay = Math.floor(this.rng() * H);
+        att++;
+      } while (att < 50 && (map[ay*W+ax] === TILES.WATER || map[ay*W+ax] === TILES.MOUNTAIN));
+      if (att < 50) { map[ay*W+ax] = TILES.ANOMALY; anomalies.push({ x: ax, y: ay }); }
+    }
+
+    this.generateRivers(world);
+    return world;
+  }
+
+  drawRoad(world, x1, y1, x2, y2) {
+    let x = x1, y = y1, safety = 0;
+    while ((x !== x2 || y !== y2) && safety++ < 300) {
+      const dx = Math.sign(x2-x), dy = Math.sign(y2-y);
+      if      (this.rng() < 0.5 && dx !== 0) x += dx;
+      else if (dy !== 0)                      y += dy;
+      else if (dx !== 0)                      x += dx;
+      if (world.inBounds(x,y)) {
+        const t = world.get(x,y);
+        if (t !== TILES.WATER && t !== TILES.SETTLEMENT) world.set(x,y,TILES.ROAD);
+      } else break;
+    }
+  }
+
+  generateRivers(world) {
+    const numRivers = 3 + Math.floor(this.rng() * 4);
+    for (let r = 0; r < numRivers; r++) {
+      let sx, sy, found = false;
+      for (let att = 0; att < 50 && !found; att++) {
+        sx = Math.floor(this.rng() * CONFIG.WORLD_W);
+        sy = Math.floor(this.rng() * CONFIG.WORLD_H);
+        const t = world.get(sx,sy);
+        if (t === TILES.MOUNTAIN || t === TILES.HILLS) found = true;
+      }
+      if (!found) continue;
+      let x = sx, y = sy;
+      const maxLen = 25 + Math.floor(this.rng() * 20);
+      for (let step = 0; step < maxLen; step++) {
+        if (world.get(x,y) === TILES.WATER) break;
+        if (world.get(x,y) !== TILES.MOUNTAIN) world.set(x,y,TILES.SHALLOW);
+        const dirs = [{dx:-1,dy:0},{dx:1,dy:0},{dx:0,dy:-1},{dx:0,dy:1}];
+        for (let i = dirs.length-1; i > 0; i--) {
+          const j = Math.floor(this.rng()*(i+1));
+          [dirs[i],dirs[j]] = [dirs[j],dirs[i]];
         }
-        return crash;
+        let moved = false;
+        for (const {dx,dy} of dirs) {
+          const nx = x+dx, ny = y+dy;
+          if (world.inBounds(nx,ny)) {
+            const nt = world.get(nx,ny);
+            if (nt===TILES.WATER||nt===TILES.SHALLOW||nt===TILES.PLAINS||nt===TILES.SWAMP) {
+              x=nx; y=ny; moved=true; break;
+            }
+          }
+        }
+        if (!moved) {
+          const d = dirs[0];
+          const nx=x+d.dx, ny=y+d.dy;
+          if (world.inBounds(nx,ny)) { x=nx; y=ny; } else break;
+        }
+      }
     }
+  }
+
+  generateNoise(w, h) {
+    const gs = 8, gw = Math.ceil(w/gs)+1, gh = Math.ceil(h/gs)+1;
+    const grid = [];
+    for (let i = 0; i < gw*gh; i++) grid.push(this.rng());
+    const noise = new Float32Array(w*h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const gx=Math.floor(x/gs), gy=Math.floor(y/gs);
+        const fx=(x%gs)/gs, fy=(y%gs)/gs;
+        const v00=grid[gy*gw+gx]||0, v10=grid[gy*gw+(gx+1)]||v00;
+        const v01=grid[(gy+1)*gw+gx]||v00, v11=grid[(gy+1)*gw+(gx+1)]||v00;
+        const sfx=fx*fx*(3-2*fx), sfy=fy*fy*(3-2*fy);
+        noise[y*w+x]=v00*(1-sfx)*(1-sfy)+v10*sfx*(1-sfy)+v01*(1-sfx)*sfy+v11*sfx*sfy;
+      }
+    }
+    return noise;
+  }
 }
 
-function updateGameArea() {
-    var x, height, gap, minHeight, maxHeight, minGap, maxGap;
-    for (i = 0; i < myObstacles.length; i += 1) {
-        if (myGamePiece.crashWith(myObstacles[i])) {
-            return;
-        } 
+// === SYSTEMS ===
+
+class WeatherSystem {
+  constructor(rng) {
+    this.rng = rng;
+    this.states = ['clear','rainy','stormy','drought','blizzard'];
+    this.current = 'clear';
+    this.nextChange = 80 + Math.floor(rng()*70);
+    this.tickCount = 0;
+  }
+  update(dt, ecs, world, game) {
+    this.tickCount++;
+    if (this.tickCount >= this.nextChange) {
+      this.tickCount = 0;
+      this.nextChange = 80 + Math.floor(this.rng()*70);
+      this.transition(world, game);
     }
-    myGameArea.clear();
-    myGameArea.frameNo += 1;
-    if (myGameArea.frameNo == 1 || everyinterval(150)) {
-        x = myGameArea.canvas.width;
-        minHeight = 20;
-        maxHeight = 200;
-        height = Math.floor(Math.random()*(maxHeight-minHeight+1)+minHeight);
-        minGap = 50;
-        maxGap = 200;
-        gap = Math.floor(Math.random()*(maxGap-minGap+1)+minGap);
-        myObstacles.push(new component(10, height, "green", x, 0));
-        myObstacles.push(new component(10, x - height - gap, "green", x, height + gap));
+    if (this.current==='stormy' && this.rng()<0.1) {
+      const npcs = ecs.getEntitiesWith('AI','Health');
+      if (npcs.length > 0) {
+        const t = npcs[Math.floor(this.rng()*npcs.length)];
+        const hp = ecs.getComponent(t,'Health');
+        if (hp) hp.hp -= 1;
+      }
     }
-    for (i = 0; i < myObstacles.length; i += 1) {
-        myObstacles[i].x += -1;
-        myObstacles[i].update();
+    if (this.current==='blizzard' && this.rng()<0.05) {
+      const x=Math.floor(this.rng()*CONFIG.WORLD_W), y=Math.floor(this.rng()*CONFIG.WORLD_H);
+      if (world.inBounds(x,y)) {
+        const t=world.get(x,y);
+        if (t===TILES.SHALLOW||t===TILES.PLAINS) world.set(x,y,TILES.ICE);
+      }
     }
-    myScore.text="SCORE: " + myGameArea.frameNo;
-    myScore.update();
-    myGamePiece.newPos();
-    myGamePiece.update();
+  }
+  transition(world, game) {
+    const prev = this.current;
+    const weights = {
+      clear:[0.4,0.2,0.1,0.2,0.1], rainy:[0.4,0.2,0.2,0.1,0.1],
+      stormy:[0.3,0.3,0.1,0.1,0.2], drought:[0.3,0.1,0.1,0.3,0.2], blizzard:[0.4,0.2,0.1,0.1,0.2]
+    };
+    const w = weights[this.current]||weights.clear;
+    const r = this.rng(); let acc=0;
+    for (let i=0; i<this.states.length; i++) { acc+=w[i]; if (r<acc) { this.current=this.states[i]; break; } }
+    if (this.current!==prev) game.addMessage('Weather changed to '+this.current);
+  }
+  isRaining() { return this.current==='rainy'||this.current==='stormy'; }
+  isDrought() { return this.current==='drought'; }
 }
 
-function everyinterval(n) {
-    if ((myGameArea.frameNo / n) % 1 == 0) {return true;}
+class FireSystem {
+  update(dt, ecs, world, game) {
+    const fam = game.fireAgeMap;
+    const drought = game.weather.isDrought(), rain = game.weather.isRaining();
+    const spreadChance = drought ? 0.25 : (rain ? 0.02 : 0.15);
+    const toProcess = [];
+    for (let y=0; y<CONFIG.WORLD_H; y++)
+      for (let x=0; x<CONFIG.WORLD_W; x++)
+        if (world.get(x,y)===TILES.FIRE) toProcess.push({x,y});
+    for (const {x,y} of toProcess) {
+      const idx = y*CONFIG.WORLD_W+x;
+      const age = (fam.get(idx)||0)+1;
+      fam.set(idx, age);
+      if (age >= 8+Math.floor(game.rng()*4)) { world.set(x,y,TILES.ASH); fam.delete(idx); continue; }
+      if (rain && game.rng()<0.3) { world.set(x,y,TILES.ASH); fam.delete(idx); continue; }
+      const dirs=[{dx:-1,dy:0},{dx:1,dy:0},{dx:0,dy:-1},{dx:0,dy:1}];
+      for (const {dx,dy} of dirs) {
+        const nx=x+dx, ny=y+dy;
+        if (world.inBounds(nx,ny) && world.get(nx,ny)===TILES.FOREST && game.rng()<spreadChance) {
+          world.set(nx,ny,TILES.FIRE); fam.set(ny*CONFIG.WORLD_W+nx,0);
+        }
+      }
+      for (const eid of ecs.getEntitiesWith('Position','Health')) {
+        const pos=ecs.getComponent(eid,'Position');
+        if (pos.x===x && pos.y===y) { const hp=ecs.getComponent(eid,'Health'); hp.hp-=2; }
+      }
+    }
+  }
+}
+
+class EcologySystem {
+  update(dt, ecs, world, game) {
+    for (let i=0; i<200; i++) {
+      const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+      const tile=world.get(x,y);
+      if (tile===TILES.ASH && game.rng()<0.01) { world.set(x,y,TILES.PLAINS); }
+      else if (tile===TILES.PLAINS && game.rng()<0.005 && this.hasAdj(world,x,y,TILES.FOREST)) { world.set(x,y,TILES.FOREST); }
+      else if (tile===TILES.SHALLOW && game.rng()<0.003 && this.hasAdj(world,x,y,TILES.SWAMP)) { world.set(x,y,TILES.SWAMP); }
+      else if (tile===TILES.ICE && game.rng()<0.005 && game.weather.current!=='blizzard') {
+        // Melt to plains if adjacent plains exist, otherwise shallow water
+        const meltTo = this.hasAdj(world,x,y,TILES.PLAINS) ? TILES.PLAINS : TILES.SHALLOW;
+        world.set(x,y,meltTo);
+      }
+    }
+  }
+  hasAdj(world,x,y,type) {
+    return [{dx:-1,dy:0},{dx:1,dy:0},{dx:0,dy:-1},{dx:0,dy:1}]
+      .some(({dx,dy})=>world.inBounds(x+dx,y+dy)&&world.get(x+dx,y+dy)===type);
+  }
+}
+
+const FACTIONS = [
+  { id:0, name:'Verdant Alliance', color:'#33aa33', shortName:'Verdant', biomes:[TILES.FOREST,TILES.PLAINS] },
+  { id:1, name:'Iron Republic',    color:'#888899', shortName:'Iron',    biomes:[TILES.MOUNTAIN,TILES.HILLS] },
+  { id:2, name:'Scavenger Horde',  color:'#cc3322', shortName:'Scav',    biomes:[TILES.RUINS,TILES.DESERT] },
+  { id:3, name:'Mystic Order',     color:'#9933cc', shortName:'Mystic',  biomes:[TILES.ANOMALY,TILES.SWAMP] },
+];
+
+class FactionSystem {
+  constructor() {
+    this.relations = [
+      [ 0,   0.1, -0.3,  0  ],
+      [ 0.1, 0,    0,   -0.2],
+      [-0.3, 0,    0,    0  ],
+      [ 0,  -0.2,  0,    0  ]
+    ];
+    this.warTick = {};
+    this.alliances = new Set();
+  }
+  update(dt, ecs, world, game) {
+    for (let i=0; i<4; i++) for (let j=i+1; j<4; j++) {
+      const drift = (game.rng()-0.5)*0.01;
+      this.relations[i][j] = Math.max(-1,Math.min(1,this.relations[i][j]+drift));
+      this.relations[j][i] = this.relations[i][j];
+    }
+    for (let i=0; i<4; i++) for (let j=i+1; j<4; j++) {
+      const key=`${i}-${j}`;
+      if (this.relations[i][j]<-0.5) {
+        this.warTick[key]=(this.warTick[key]||0)+1;
+        if (this.warTick[key]===20) {
+          game.addMessage('WAR: '+FACTIONS[i].name+' vs '+FACTIONS[j].name+'!');
+          game.triggerEvent('FACTION_WAR',{factions:[i,j]});
+        }
+      } else { this.warTick[key]=0; }
+      if (this.relations[i][j]>0.7 && !this.alliances.has(key)) {
+        this.alliances.add(key);
+        game.addMessage('ALLIANCE: '+FACTIONS[i].name+' + '+FACTIONS[j].name);
+      } else if (this.relations[i][j]<=0.7) { this.alliances.delete(key); }
+    }
+  }
+  getRelation(a,b) {
+    if (a===b) return 1;
+    return (this.relations[a]&&this.relations[a][b]!==undefined)?this.relations[a][b]:0;
+  }
+  modifyRelation(a,b,delta) {
+    if (!this.relations[a]||this.relations[a][b]===undefined) return;
+    this.relations[a][b]=Math.max(-1,Math.min(1,this.relations[a][b]+delta));
+    if (this.relations[b]) this.relations[b][a]=this.relations[a][b];
+  }
+  getPlayerRelation(game) {
+    if (game.playerFaction<0) return 'Neutral';
+    const rel=this.relations[0][game.playerFaction];
+    if (rel>0.7) return 'Allied';
+    if (rel>0.2) return 'Friendly';
+    if (rel>-0.2) return 'Neutral';
+    if (rel>-0.5) return 'Cold';
+    return 'Hostile';
+  }
+}
+
+class NPCAISystem {
+  update(dt, ecs, world, game) {
+    const npcs = ecs.getEntitiesWith('Position','AI','Health','Render');
+    for (const eid of npcs) {
+      const ai=ecs.getComponent(eid,'AI'), pos=ecs.getComponent(eid,'Position');
+      const hp=ecs.getComponent(eid,'Health'), fc=ecs.getComponent(eid,'FactionComp');
+      if (hp.hp<=0) { ecs.removeEntity(eid); continue; }
+      if (hp.hp<hp.maxHp && game.rng()<0.1) hp.hp=Math.min(hp.maxHp,hp.hp+1);
+      if (hp.hp<hp.maxHp*0.3) { this.flee(eid,pos,world,ecs,game); continue; }
+      switch (ai.type) {
+        case 'settler':   this.behaviorSettler(eid,pos,ai,world,ecs,game,fc); break;
+        case 'raider':    this.behaviorRaider(eid,pos,ai,world,ecs,game,fc); break;
+        case 'trader':    this.behaviorTrader(eid,pos,ai,world,ecs,game,fc); break;
+        case 'wanderer':  this.behaviorWanderer(eid,pos,ai,world,ecs,game); break;
+        case 'guardian':  this.behaviorGuardian(eid,pos,ai,world,ecs,game,fc); break;
+        case 'scavenger': this.behaviorScavenger(eid,pos,ai,world,ecs,game); break;
+        default:          this.moveRandom(pos,world,ecs,game); break;
+      }
+    }
+    const all = ecs.getEntitiesWith('AI');
+    if (all.length < 25 && game.rng()<0.4) {
+      const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+      if (world.inBounds(x,y) && TILE_INFO[world.get(x,y)].passable) {
+        const types=['settler','wanderer','trader','scavenger','guardian'];
+        game.spawnNPC(x,y,types[Math.floor(game.rng()*types.length)],Math.floor(game.rng()*4));
+      }
+    }
+  }
+  moveToward(pos,tx,ty,world,ecs) {
+    const dx=Math.sign(tx-pos.x), dy=Math.sign(ty-pos.y);
+    const moves=[];
+    if (dx!==0&&dy!==0) moves.push({x:pos.x+dx,y:pos.y},{x:pos.x,y:pos.y+dy},{x:pos.x+dx,y:pos.y+dy});
+    else if (dx!==0) moves.push({x:pos.x+dx,y:pos.y},{x:pos.x,y:pos.y+1},{x:pos.x,y:pos.y-1});
+    else moves.push({x:pos.x,y:pos.y+dy},{x:pos.x+1,y:pos.y},{x:pos.x-1,y:pos.y});
+    for (const m of moves)
+      if (world.inBounds(m.x,m.y)&&TILE_INFO[world.get(m.x,m.y)].passable&&!this.isNPCOccupied(m.x,m.y,ecs)) {
+        pos.x=m.x; pos.y=m.y; return true;
+      }
     return false;
+  }
+  moveRandom(pos,world,ecs,game) {
+    const dirs=[{dx:-1,dy:0},{dx:1,dy:0},{dx:0,dy:-1},{dx:0,dy:1},{dx:0,dy:0}];
+    const d=dirs[Math.floor(game.rng()*dirs.length)];
+    const nx=pos.x+d.dx, ny=pos.y+d.dy;
+    if (world.inBounds(nx,ny)&&TILE_INFO[world.get(nx,ny)].passable&&!this.isNPCOccupied(nx,ny,ecs)) {
+      pos.x=nx; pos.y=ny;
+    }
+  }
+  isNPCOccupied(x,y,ecs) {
+    return ecs.getEntitiesWith('Position','AI').some(eid=>{
+      const p=ecs.getComponent(eid,'Position'); return p.x===x&&p.y===y;
+    });
+  }
+  flee(eid,pos,world,ecs,game) {
+    const pp=game.getPlayerPos(); if (!pp) return;
+    const sdx=pos.x===pp.x?(game.rng()<0.5?1:-1):Math.sign(pos.x-pp.x);
+    const sdy=pos.y===pp.y?(game.rng()<0.5?1:-1):Math.sign(pos.y-pp.y);
+    const nx=pos.x+sdx, ny=pos.y+sdy;
+    if (world.inBounds(nx,ny)&&TILE_INFO[world.get(nx,ny)].passable) { pos.x=nx; pos.y=ny; }
+  }
+  behaviorSettler(eid,pos,ai,world,ecs,game,fc) { if (game.rng()<0.7) return; this.moveRandom(pos,world,ecs,game); }
+  behaviorRaider(eid,pos,ai,world,ecs,game,fc) {
+    const pp=game.getPlayerPos();
+    if (pp) {
+      const dist=Math.abs(pos.x-pp.x)+Math.abs(pos.y-pp.y);
+      if (dist<=5) {
+        if (dist<=1) {
+          const ph=ecs.getComponent(game.playerId,'Health');
+          if (ph) { ph.hp-=3; game.addMessage('Raider attacks! (-3 HP)'); }
+        } else { this.moveToward(pos,pp.x,pp.y,world,ecs); }
+        return;
+      }
+    }
+    const rivals=ecs.getEntitiesWith('Position','AI','FactionComp');
+    for (const rid of rivals) {
+      if (rid===eid||!fc) continue;
+      const rp=ecs.getComponent(rid,'Position'), rf=ecs.getComponent(rid,'FactionComp');
+      if (!rf||rf.factionId===fc.factionId) continue;
+      if (Math.abs(pos.x-rp.x)+Math.abs(pos.y-rp.y)<=1) {
+        const rhp=ecs.getComponent(rid,'Health'); if (rhp) rhp.hp-=5; return;
+      }
+    }
+    this.moveRandom(pos,world,ecs,game);
+  }
+  behaviorTrader(eid,pos,ai,world,ecs,game,fc) {
+    if (!ai.goal) { const s=world.settlements; if (s.length>1) ai.goal=s[Math.floor(game.rng()*s.length)]; }
+    if (ai.goal) {
+      if (Math.abs(pos.x-ai.goal.x)+Math.abs(pos.y-ai.goal.y)<2) ai.goal=null;
+      else this.moveToward(pos,ai.goal.x,ai.goal.y,world,ecs);
+    } else this.moveRandom(pos,world,ecs,game);
+  }
+  behaviorWanderer(eid,pos,ai,world,ecs,game) {
+    if (!ai.goal||game.rng()<0.1)
+      ai.goal={x:Math.floor(game.rng()*CONFIG.WORLD_W),y:Math.floor(game.rng()*CONFIG.WORLD_H)};
+    if (Math.abs(pos.x-ai.goal.x)+Math.abs(pos.y-ai.goal.y)<3) ai.goal=null;
+    else this.moveToward(pos,ai.goal.x,ai.goal.y,world,ecs);
+  }
+  behaviorGuardian(eid,pos,ai,world,ecs,game,fc) {
+    if (!ai.goal||game.rng()<0.05)
+      ai.goal={
+        x:Math.max(0,Math.min(CONFIG.WORLD_W-1,pos.x+Math.floor((game.rng()-0.5)*20))),
+        y:Math.max(0,Math.min(CONFIG.WORLD_H-1,pos.y+Math.floor((game.rng()-0.5)*20)))
+      };
+    if (Math.abs(pos.x-ai.goal.x)+Math.abs(pos.y-ai.goal.y)<2) ai.goal=null;
+    else this.moveToward(pos,ai.goal.x,ai.goal.y,world,ecs);
+  }
+  behaviorScavenger(eid,pos,ai,world,ecs,game) {
+    let target=null, bestDist=20;
+    for (let ry=pos.y-10; ry<=pos.y+10; ry++) for (let rx=pos.x-10; rx<=pos.x+10; rx++) {
+      if (!world.inBounds(rx,ry)) continue;
+      const t=world.get(rx,ry);
+      if (t===TILES.FIRE||t===TILES.RUINS||t===TILES.ASH) {
+        const d=Math.abs(rx-pos.x)+Math.abs(ry-pos.y);
+        if (d<bestDist) { bestDist=d; target={x:rx,y:ry}; }
+      }
+    }
+    if (target) this.moveToward(pos,target.x,target.y,world,ecs);
+    else this.moveRandom(pos,world,ecs,game);
+  }
 }
 
-function accelerate(n) {
-    myGamePiece.gravity = n;
+class EventSystem {
+  constructor() { this.activeEvents=[]; this.eventHistory=[]; }
+  update(dt,ecs,world,game) {
+    const npcs=ecs.getEntitiesWith('Position','AI');
+    if (npcs.length>50&&game.rng()<0.005&&!this.activeEvents.find(e=>e.type==='PLAGUE'))
+      this.trigger('PLAGUE',game,ecs,world);
+    if (game.rng()<0.002) this.trigger('NATURAL_DISASTER',game,ecs,world);
+    for (let i=this.activeEvents.length-1; i>=0; i--) {
+      const ev=this.activeEvents[i]; ev.duration--;
+      this.tickEvent(ev,game,ecs,world);
+      if (ev.duration<=0) { this.activeEvents.splice(i,1); game.addMessage('Event ended: '+ev.type); }
+    }
+  }
+  trigger(type,game,ecs,world,data={}) {
+    game.addMessage('EVENT: '+type+'!');
+    game.entropy=Math.min(100,game.entropy+10);
+    const event={type,duration:20+Math.floor(game.rng()*20),data};
+    this.activeEvents.push(event);
+    this.eventHistory.push({type,tick:game.tick});
+    switch (type) {
+      case 'NATURAL_DISASTER':
+        for (let i=0; i<5; i++) {
+          const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+          if (world.inBounds(x,y)&&world.get(x,y)===TILES.FOREST) {
+            world.set(x,y,TILES.FIRE); game.fireAgeMap.set(y*CONFIG.WORLD_W+x,0);
+          }
+        } break;
+      case 'MYSTERIOUS_ARTIFACT':
+        if (world.ruins.length>0) {
+          const inv=ecs.getComponent(game.playerId,'Inventory');
+          if (inv) { inv.add('artifact'); game.addMessage('A mysterious artifact appears!'); }
+        } break;
+      case 'SCAVENGER_RAID':
+        for (let i=0; i<5; i++) {
+          const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+          if (world.inBounds(x,y)&&TILE_INFO[world.get(x,y)].passable) game.spawnNPC(x,y,'scavenger',2);
+        } break;
+      case 'FACTION_WAR':
+        if (data.factions) for (const fid of data.factions)
+          for (let i=0; i<3; i++) {
+            const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+            if (world.inBounds(x,y)&&TILE_INFO[world.get(x,y)].passable) game.spawnNPC(x,y,'raider',fid);
+          }
+        break;
+      case 'MACHINE_UPRISING': game.addMessage('Machines have rebelled!'); break;
+      case 'WEATHER_ANOMALY':
+        game.addMessage('Impossible weather descends!');
+        if (game.weather) game.weather.current='stormy'; break;
+      case 'PLAGUE': break;
+    }
+  }
+  tickEvent(ev,game,ecs,world) {
+    if (ev.type==='PLAGUE') {
+      for (const eid of ecs.getEntitiesWith('AI','Health'))
+        if (game.rng()<0.1) { const hp=ecs.getComponent(eid,'Health'); if (hp) hp.hp-=1; }
+    }
+  }
 }
+
+class PlayerSystem {
+  update(dt,ecs,world,game) {
+    if (!game.playerId) return;
+    const hp=ecs.getComponent(game.playerId,'Health');
+    const energy=ecs.getComponent(game.playerId,'Energy');
+    const pos=ecs.getComponent(game.playerId,'Position');
+    if (!hp||!energy||!pos) return;
+    if (hp.hp<=0) { game.gameOver(); return; }
+    if (energy.energy<energy.maxEnergy) energy.energy=Math.min(energy.maxEnergy,energy.energy+0.5);
+    if (world.get(pos.x,pos.y)===TILES.FIRE) { hp.hp-=2; game.addMessage('Fire burns you! (-2 HP)'); }
+    if (ecs.getEntitiesWith('Machine').length>=3&&game.rng()<0.01)
+      game.events.trigger('MACHINE_UPRISING',game,ecs,world);
+  }
+}
+
+// === ENTROPY ENGINE ===
+class EntropyEngine {
+  constructor() {
+    this.gravityChaos=0;
+    // Track pending faction blur effects: [{eid, origFaction, endTick}]
+    this.pendingFactionBlurs=[];
+  }
+  update(game,ecs,world) {
+    const fires=this.countFires(world);
+    const activeEvents=game.events.activeEvents.length;
+    const wars=Object.values(game.factions.warTick).filter(v=>v>0).length;
+    const stable=fires===0&&activeEvents===0&&wars===0;
+    if (stable) game.entropy=Math.min(100,game.entropy+1);
+    else game.entropy=Math.max(0,game.entropy-2);
+    if (game.entropy>=CONFIG.ENTROPY_CHAOS_THRESHOLD&&game.rng()<0.1) this.minorChaos(game,ecs,world);
+    if (game.entropy>=CONFIG.ENTROPY_SURGE_THRESHOLD) { game.entropy=0; this.entropySurge(game,ecs,world); }
+    if (game.entropy>60&&game.rng()<0.05) this.realityGlitch(game,ecs,world);
+    // Tick-based gravity chaos countdown
+    if (this.gravityChaos>0) {
+      this.gravityChaos--;
+      if (this.gravityChaos===0) { game.invertedGravity=false; game.addMessage('Reality stabilizes.'); }
+    }
+    // Tick-based faction blur restoration
+    for (let i=this.pendingFactionBlurs.length-1;i>=0;i--) {
+      const blur=this.pendingFactionBlurs[i];
+      if (game.tick>=blur.endTick) {
+        const fc=ecs.getComponent(blur.eid,'FactionComp');
+        if (fc) fc.factionId=blur.origFaction;
+        this.pendingFactionBlurs.splice(i,1);
+      }
+    }
+  }
+  countFires(world) {
+    let n=0; for (let i=0; i<world.tiles.length; i++) if (world.tiles[i]===TILES.FIRE) n++; return n;
+  }
+  minorChaos(game,ecs,world) {
+    const r=game.rng();
+    if (r<0.33) {
+      const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+      if (world.inBounds(x,y)&&world.get(x,y)===TILES.FOREST) {
+        world.set(x,y,TILES.FIRE); game.fireAgeMap.set(y*CONFIG.WORLD_W+x,0);
+        game.addMessage('Entropy spark: fire ignites!');
+      }
+    } else if (r<0.66) {
+      const npcs=ecs.getEntitiesWith('AI','FactionComp');
+      if (npcs.length>0) {
+        const npc=npcs[Math.floor(game.rng()*npcs.length)];
+        const ai=ecs.getComponent(npc,'AI');
+        if (ai) { ai.type='raider'; game.addMessage('Entropy chaos: NPC rebels!'); }
+      }
+    } else { game.addMessage('Minor entropy disturbance...'); }
+  }
+  entropySurge(game,ecs,world) {
+    game.addMessage('⚡ ENTROPY SURGE! Reality destabilizes!');
+    for (let i=0; i<10; i++) {
+      const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+      if (world.inBounds(x,y)&&world.get(x,y)===TILES.FOREST) {
+        world.set(x,y,TILES.FIRE); game.fireAgeMap.set(y*CONFIG.WORLD_W+x,0);
+      }
+    }
+    for (let i=0; i<20; i++) {
+      const x1=Math.floor(game.rng()*CONFIG.WORLD_W), y1=Math.floor(game.rng()*CONFIG.WORLD_H);
+      const x2=Math.floor(game.rng()*CONFIG.WORLD_W), y2=Math.floor(game.rng()*CONFIG.WORLD_H);
+      if (world.inBounds(x1,y1)&&world.inBounds(x2,y2)) {
+        const tmp=world.get(x1,y1); world.set(x1,y1,world.get(x2,y2)); world.set(x2,y2,tmp);
+      }
+    }
+  }
+  realityGlitch(game,ecs,world) {
+    const effects=['gravity','tiles','faction'];
+    const effect=effects[Math.floor(game.rng()*effects.length)];
+    if (effect==='gravity') {
+      this.gravityChaos=5; game.invertedGravity=true;
+      game.addMessage('⚠ REALITY GLITCH: Gravity inverts!');
+    } else if (effect==='tiles') {
+      const sw=[TILES.PLAINS,TILES.FOREST,TILES.SWAMP,TILES.DESERT];
+      for (let i=0; i<5; i++) {
+        const x=Math.floor(game.rng()*CONFIG.WORLD_W), y=Math.floor(game.rng()*CONFIG.WORLD_H);
+        if (world.inBounds(x,y)&&sw.includes(world.get(x,y))) world.set(x,y,sw[Math.floor(game.rng()*sw.length)]);
+      }
+      game.addMessage('⚠ REALITY GLITCH: Tiles warp!');
+    } else {
+      const npcs=ecs.getEntitiesWith('AI','FactionComp');
+      if (npcs.length>0) {
+        const npc=npcs[Math.floor(game.rng()*npcs.length)];
+        const fc=ecs.getComponent(npc,'FactionComp');
+        if (fc) {
+          // Schedule restoration via tick-based system (avoids setTimeout race conditions)
+          this.pendingFactionBlurs.push({ eid: npc, origFaction: fc.factionId, endTick: game.tick+CONFIG.FACTION_BLUR_DURATION });
+          fc.factionId=-1;
+        }
+      }
+      game.addMessage('⚠ REALITY GLITCH: Allegiances blur!');
+    }
+  }
+}
+
+class MemoryFractures {
+  static saveRunMemory(game,ecs) {
+    const memories=[];
+    for (const eid of ecs.getEntitiesWith('AI','Position')) {
+      const ai=ecs.getComponent(eid,'AI'), pos=ecs.getComponent(eid,'Position');
+      if (ai.memory.length>0) memories.push({type:ai.type,x:pos.x,y:pos.y,memory:ai.memory.slice(-3)});
+    }
+    try {
+      const prev=JSON.parse(localStorage.getItem('entropyMemories')||'[]');
+      prev.push({seed:game.seed,tick:game.tick,memories,playerActions:game.playerActions||[]});
+      if (prev.length>5) prev.shift();
+      localStorage.setItem('entropyMemories',JSON.stringify(prev));
+    } catch(e) {}
+  }
+  static loadAndApply(game,ecs,seed) {
+    try {
+      const prev=JSON.parse(localStorage.getItem('entropyMemories')||'[]');
+      const sr=prev.find(r=>r.seed===seed);
+      if (!sr||!sr.memories.length) return;
+      const npcs=ecs.getEntitiesWith('AI','Render');
+      const count=Math.floor(npcs.length*(0.1+game.rng()*0.1));
+      for (let i=0; i<count&&i<sr.memories.length; i++) {
+        const eid=npcs[Math.floor(game.rng()*npcs.length)];
+        const ai=ecs.getComponent(eid,'AI'), render=ecs.getComponent(eid,'Render');
+        if (!ai||!render) continue;
+        ai.memory=sr.memories[i].memory.slice(); render.symbol='!';
+        if (ai.memory.some(m=>m.includes('killed')||m.includes('harmed'))) {
+          ai.type='raider'; ai.memory.push('remembers player harm');
+        }
+      }
+      if (count>0) game.addMessage(count+' NPCs remember your past actions!');
+    } catch(e) {}
+  }
+}
+
+// === RENDERER ===
+class Renderer {
+  constructor(canvas,panelCanvas) {
+    this.canvas=canvas; this.ctx=canvas.getContext('2d');
+    this.panelCanvas=panelCanvas; this.panelCtx=panelCanvas.getContext('2d');
+    this.flashMessages=[];
+  }
+  render(game,ecs,world) { this.renderWorld(game,ecs,world); this.renderPanel(game,ecs); }
+  renderWorld(game,ecs,world) {
+    const ctx=this.ctx;
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
+    const pp=game.getPlayerPos(); if (!pp) return;
+    const camX=Math.max(0,Math.min(CONFIG.WORLD_W-CONFIG.VIEW_W,pp.x-Math.floor(CONFIG.VIEW_W/2)));
+    const camY=Math.max(0,Math.min(CONFIG.WORLD_H-CONFIG.VIEW_H,pp.y-Math.floor(CONFIG.VIEW_H/2)));
+    game.camX=camX; game.camY=camY;
+    ctx.font='11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    for (let ty=0; ty<CONFIG.VIEW_H; ty++) for (let tx=0; tx<CONFIG.VIEW_W; tx++) {
+      const wx=camX+tx, wy=camY+ty;
+      if (!world.inBounds(wx,wy)) continue;
+      const info=TILE_INFO[world.get(wx,wy)]; if (!info) continue;
+      const dist=Math.abs(wx-pp.x)+Math.abs(wy-pp.y);
+      const lf=Math.max(0.25,1-(dist/22)*0.75);
+      const px=tx*CONFIG.TILE_SIZE, py=ty*CONFIG.TILE_SIZE;
+      const r=parseInt(info.color.slice(1,3),16);
+      const g=parseInt(info.color.slice(3,5),16);
+      const b=parseInt(info.color.slice(5,7),16);
+      ctx.fillStyle='rgb('+Math.floor(r*lf)+','+Math.floor(g*lf)+','+Math.floor(b*lf)+')';
+      ctx.fillRect(px,py,CONFIG.TILE_SIZE,CONFIG.TILE_SIZE);
+      const lr=Math.min(255,r+60), lg=Math.min(255,g+60), lb=Math.min(255,b+60);
+      ctx.fillStyle='rgb('+Math.floor(lr*lf)+','+Math.floor(lg*lf)+','+Math.floor(lb*lf)+')';
+      ctx.fillText(info.sym,px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
+    }
+    const sorted=[...ecs.getEntitiesWith('Position','Render')].sort((a,b)=>{
+      const pa=ecs.getComponent(a,'Player'), pb=ecs.getComponent(b,'Player');
+      if (pa) return 1; if (pb) return -1; return 0;
+    });
+    for (const eid of sorted) {
+      const pos=ecs.getComponent(eid,'Position'), render=ecs.getComponent(eid,'Render');
+      const tx=pos.x-camX, ty=pos.y-camY;
+      if (tx<0||ty<0||tx>=CONFIG.VIEW_W||ty>=CONFIG.VIEW_H) continue;
+      const px=tx*CONFIG.TILE_SIZE, py=ty*CONFIG.TILE_SIZE;
+      if (ecs.getComponent(eid,'Player')) {
+        ctx.shadowColor='#ffffff'; ctx.shadowBlur=10; ctx.fillStyle='#ffffff';
+        ctx.font='bold 12px monospace';
+        ctx.fillText('@',px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
+        ctx.shadowBlur=0; ctx.font='11px monospace';
+      } else {
+        ctx.fillStyle=render.color;
+        ctx.fillText(render.symbol,px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
+      }
+    }
+    if (game.state==='PAUSED') {
+      ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
+      ctx.fillStyle='#ffff88'; ctx.font='bold 20px monospace';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('PAUSED  [P] to resume',CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2);
+      ctx.font='11px monospace';
+    }
+    if (game.invertedGravity) { ctx.fillStyle='rgba(255,0,128,0.12)'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H); }
+    this.renderFlashMessages(ctx);
+  }
+  renderFlashMessages(ctx) {
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    for (let i=this.flashMessages.length-1; i>=0; i--) {
+      const fm=this.flashMessages[i]; fm.timer--;
+      if (fm.timer<=0) { this.flashMessages.splice(i,1); continue; }
+      ctx.globalAlpha=Math.min(1,fm.timer/10);
+      ctx.fillStyle=fm.color||'#ff0'; ctx.font='bold 14px monospace';
+      ctx.fillText(fm.text,CONFIG.CANVAS_W/2,30+i*22);
+    }
+    ctx.globalAlpha=1; ctx.font='11px monospace';
+  }
+  renderPanel(game,ecs) {
+    const ctx=this.panelCtx, W=CONFIG.PANEL_W, H=CONFIG.CANVAS_H;
+    ctx.fillStyle='#0a0a12'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#333'; ctx.fillRect(0,0,1,H);
+    let y=15; const lh=16;
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle='#cc88ff'; ctx.font='bold 14px monospace';
+    ctx.fillText('ENTROPY ENGINE',10,y); y+=lh;
+    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
+    ctx.font='12px monospace';
+    const hp=ecs.getComponent(game.playerId,'Health'), en=ecs.getComponent(game.playerId,'Energy');
+    if (hp) {
+      ctx.fillStyle='#aaa'; ctx.fillText('HP:',10,y);
+      this.drawBar(ctx,40,y-9,140,12,hp.hp/hp.maxHp,'#cc2222','#331111');
+      ctx.fillStyle='#ccc'; ctx.fillText(hp.hp+'/'+hp.maxHp,186,y); y+=lh;
+    }
+    if (en) {
+      ctx.fillStyle='#aaa'; ctx.fillText('EN:',10,y);
+      this.drawBar(ctx,40,y-9,140,12,en.energy/en.maxEnergy,'#2288cc','#112233');
+      ctx.fillStyle='#ccc'; ctx.fillText(Math.floor(en.energy)+'/'+en.maxEnergy,186,y); y+=lh;
+    }
+    ctx.fillStyle='#aaa'; ctx.fillText('ENTR:',10,y);
+    const ec=game.entropy>80?'#ff2200':game.entropy>60?'#ff8800':'#8822cc';
+    this.drawBar(ctx,52,y-9,120,12,game.entropy/100,ec,'#1a0a2a');
+    ctx.fillStyle='#ccc'; ctx.fillText(Math.floor(game.entropy)+'%',178,y); y+=lh;
+    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
+    ctx.fillStyle='#88aacc'; ctx.font='11px monospace';
+    ctx.fillText('WEATHER: '+game.weather.current,10,y); y+=lh;
+    ctx.fillText('TICK: '+game.tick,10,y); y+=lh;
+    ctx.fillText('STATUS: '+game.factions.getPlayerRelation(game),10,y); y+=lh;
+    if (game.invertedGravity) { ctx.fillStyle='#ff4488'; ctx.fillText('⚠ INVERTED GRAVITY',10,y); y+=lh; }
+    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
+    ctx.fillStyle='#ccaa44'; ctx.font='bold 11px monospace'; ctx.fillText('FACTIONS:',10,y); y+=lh;
+    ctx.font='11px monospace';
+    for (const f of FACTIONS) {
+      const rel=game.factions.getRelation(f.id,game.playerFaction>=0?game.playerFaction:0);
+      const rs=rel>0.7?'Allied':rel>0.2?'Friendly':rel>-0.2?'Neutral':rel>-0.5?'Cold':'Hostile';
+      ctx.fillStyle=f.color; ctx.fillText('['+f.shortName+']',10,y);
+      ctx.fillStyle='#aaa'; ctx.fillText(rs,85,y); y+=lh;
+    }
+    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
+    ctx.fillStyle='#ccaa44'; ctx.font='bold 11px monospace'; ctx.fillText('INVENTORY:',10,y); y+=lh;
+    ctx.font='11px monospace';
+    const inv=ecs.getComponent(game.playerId,'Inventory');
+    if (inv) {
+      const items=inv.list();
+      if (!items.length) { ctx.fillStyle='#555'; ctx.fillText('(empty)',10,y); y+=lh; }
+      else for (const [item,count] of items) {
+        if (y>H-90) break;
+        ctx.fillStyle='#aaccaa'; ctx.fillText('- '+item+' x'+count,10,y); y+=lh;
+      }
+    }
+    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
+    ctx.fillStyle='#ccaa44'; ctx.font='bold 11px monospace'; ctx.fillText('LOG:',10,y); y+=lh;
+    ctx.font='10px monospace';
+    const msgs=game.messages.slice(-10);
+    for (const msg of msgs) {
+      if (y>H-30) break;
+      for (const line of this.wrapText(msg,26)) {
+        if (y>H-30) break;
+        ctx.fillStyle='#88aacc'; ctx.fillText(line,10,y); y+=13;
+      }
+    }
+    if (game.events.activeEvents.length>0) {
+      ctx.fillStyle='#ff4400'; ctx.font='bold 10px monospace';
+      ctx.fillText('EVT: '+game.events.activeEvents.map(e=>e.type).join(', ').slice(0,28),10,H-20);
+    }
+    ctx.fillStyle='#334455'; ctx.font='9px monospace';
+    ctx.fillText('[1]Terraform [2]Signal [3]Build [4]Event',5,H-6);
+  }
+  drawBar(ctx,x,y,w,h,fill,fc,bg) {
+    ctx.fillStyle=bg; ctx.fillRect(x,y,w,h);
+    ctx.fillStyle=fc; ctx.fillRect(x,y,Math.floor(w*Math.max(0,Math.min(1,fill))),h);
+    ctx.strokeStyle='#444'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+  }
+  wrapText(text,maxLen) {
+    if (!text) return [''];
+    const words=text.split(' '), lines=[]; let cur='';
+    for (const w of words) {
+      const attempt=cur?cur+' '+w:w;
+      if (attempt.length>maxLen) { if (cur) lines.push(cur); cur=w; } else cur=attempt;
+    }
+    if (cur) lines.push(cur);
+    return lines.length?lines:[text.slice(0,maxLen)];
+  }
+  addFlashMessage(text,color='#ffff00',duration=60) { this.flashMessages.push({text,color,timer:duration}); }
+}
+
+// === GAME CLASS ===
+class Game {
+  constructor(seed) {
+    this.seed=seed; this.rng=mulberry32(seed);
+    this.ecs=new ECS(); this.tick=0; this.entropy=0; this.state='PLAYING';
+    this.messages=[]; this.camX=0; this.camY=0;
+    this.playerFaction=-1; this.invertedGravity=false;
+    this.fireAgeMap=new Map(); this.playerActions=[];
+    const gen=new WorldGenerator(seed); this.world=gen.generate();
+    this.weather=new WeatherSystem(mulberry32(seed+1));
+    this.fireSystem=new FireSystem(); this.ecology=new EcologySystem();
+    this.factions=new FactionSystem(); this.npcAI=new NPCAISystem();
+    this.events=new EventSystem(); this.playerSystem=new PlayerSystem();
+    this.entropyEngine=new EntropyEngine();
+    this.playerId=this.createPlayer();
+    this.createNPCs(40+Math.floor(this.rng()*20));
+    MemoryFractures.loadAndApply(this,this.ecs,seed);
+    this.addMessage('Welcome to Entropy Engine!');
+    this.addMessage('WASD/Arrows: Move | E: Interact | C: Craft');
+    this.addMessage('1-4: Abilities | M: Map | P: Pause | /: Help');
+  }
+  createPlayer() {
+    let px=Math.floor(CONFIG.WORLD_W/2), py=Math.floor(CONFIG.WORLD_H/2);
+    outer: for (let r=0; r<25; r++)
+      for (let dx=-r; dx<=r; dx++)
+        for (let dy=-r; dy<=r; dy++) {
+          const x=px+dx, y=py+dy;
+          if (this.world.inBounds(x,y)&&TILE_INFO[this.world.get(x,y)].passable) { px=x; py=y; break outer; }
+        }
+    const eid=this.ecs.createEntity();
+    this.ecs.addComponent(eid,'Position',PositionComponent(px,py));
+    this.ecs.addComponent(eid,'Health',HealthComponent(100,100));
+    this.ecs.addComponent(eid,'Energy',EnergyComponent(100,100));
+    this.ecs.addComponent(eid,'Player',PlayerComponent());
+    this.ecs.addComponent(eid,'Render',RenderComponent('@','#ffffff'));
+    this.ecs.addComponent(eid,'Inventory',InventoryComponent());
+    this.ecs.addComponent(eid,'FactionComp',FactionComponent(-1));
+    const inv=this.ecs.getComponent(eid,'Inventory');
+    inv.add('wood',3); inv.add('stone',2);
+    return eid;
+  }
+  createNPCs(count) {
+    const types=['settler','raider','trader','wanderer','guardian','scavenger'];
+    const weights=[0.2,0.15,0.15,0.2,0.15,0.15];
+    for (let i=0; i<count; i++) {
+      let x,y,att=0;
+      do { x=Math.floor(this.rng()*CONFIG.WORLD_W); y=Math.floor(this.rng()*CONFIG.WORLD_H); att++; }
+      while ((!this.world.inBounds(x,y)||!TILE_INFO[this.world.get(x,y)].passable)&&att<50);
+      if (att>=50) continue;
+      let r=this.rng(),type=types[0],acc=0;
+      for (let j=0; j<types.length; j++) { acc+=weights[j]; if (r<acc) { type=types[j]; break; } }
+      this.spawnNPC(x,y,type,Math.floor(this.rng()*4));
+    }
+  }
+  spawnNPC(x,y,type,factionId) {
+    if (this.ecs.getEntitiesWith('AI').length>=CONFIG.MAX_NPCS) return null;
+    const sym={settler:'s',raider:'r',trader:'t',wanderer:'w',guardian:'g',scavenger:'v'};
+    const eid=this.ecs.createEntity();
+    this.ecs.addComponent(eid,'Position',PositionComponent(x,y));
+    this.ecs.addComponent(eid,'Health',HealthComponent(50+Math.floor(this.rng()*30),80));
+    this.ecs.addComponent(eid,'AI',AIComponent(type));
+    this.ecs.addComponent(eid,'FactionComp',FactionComponent(factionId));
+    const color=(factionId>=0&&factionId<FACTIONS.length)?FACTIONS[factionId].color:'#aaaaaa';
+    this.ecs.addComponent(eid,'Render',RenderComponent(sym[type]||'?',color));
+    return eid;
+  }
+  getPlayerPos() { return this.playerId?this.ecs.getComponent(this.playerId,'Position'):null; }
+  addMessage(msg) { this.messages.push(msg); if (this.messages.length>50) this.messages.shift(); }
+  gameOver() {
+    if (this.state==='PLAYING') {
+      this.state='GAMEOVER';
+      MemoryFractures.saveRunMemory(this,this.ecs);
+      this.saveHighScore();
+    }
+  }
+  saveHighScore() {
+    try {
+      const scores=JSON.parse(localStorage.getItem('entropyScores')||'[]');
+      scores.push({tick:this.tick,seed:this.seed,events:this.events.eventHistory.length,date:Date.now()});
+      scores.sort((a,b)=>b.tick-a.tick);
+      localStorage.setItem('entropyScores',JSON.stringify(scores.slice(0,10)));
+    } catch(e) {}
+  }
+  triggerEvent(type,data={}) { this.events.trigger(type,this,this.ecs,this.world,data); }
+  simulateTick() {
+    if (this.state!=='PLAYING') return;
+    this.tick++;
+    const dt=CONFIG.SIM_INTERVAL/1000;
+    this.weather.update(dt,this.ecs,this.world,this);
+    this.fireSystem.update(dt,this.ecs,this.world,this);
+    this.ecology.update(dt,this.ecs,this.world,this);
+    this.factions.update(dt,this.ecs,this.world,this);
+    this.npcAI.update(dt,this.ecs,this.world,this);
+    this.events.update(dt,this.ecs,this.world,this);
+    this.playerSystem.update(dt,this.ecs,this.world,this);
+    this.entropyEngine.update(this,this.ecs,this.world);
+  }
+  useAbility(index) {
+    const energy=this.ecs.getComponent(this.playerId,'Energy');
+    const pos=this.getPlayerPos();
+    if (!energy||!pos) return;
+    switch (index) {
+      case 0: {
+        if (energy.energy<20) { this.addMessage('Not enough energy!'); return; }
+        const tile=this.world.get(pos.x,pos.y);
+        const cycle=[TILES.PLAINS,TILES.FOREST,TILES.SWAMP];
+        const idx=cycle.indexOf(tile);
+        if (idx>=0) { energy.energy-=20; this.world.set(pos.x,pos.y,cycle[(idx+1)%cycle.length]); this.addMessage('Terrain terraformed!'); }
+        else this.addMessage('Cannot terraform this terrain.');
+        break;
+      }
+      case 1: {
+        if (energy.energy<15) { this.addMessage('Not enough energy!'); return; }
+        energy.energy-=15;
+        const nf=this.getNearestFaction(pos);
+        if (nf>=0) {
+          if (this.playerFaction===-1) this.playerFaction=nf;
+          this.factions.modifyRelation(0,nf,0.1);
+          this.addMessage('Signaled '+FACTIONS[nf].name+'!');
+        } else this.addMessage('No faction nearby.');
+        break;
+      }
+      case 2: {
+        if (energy.energy<30) { this.addMessage('Not enough energy!'); return; }
+        const inv=this.ecs.getComponent(this.playerId,'Inventory');
+        if (!inv||inv.count('machine_part')<1) { this.addMessage('Need machine_part!'); return; }
+        energy.energy-=30; inv.remove('machine_part');
+        const mTypes=['generator','turret','rain-maker','beacon'];
+        const mType=mTypes[Math.floor(this.rng()*mTypes.length)];
+        const meid=this.ecs.createEntity();
+        this.ecs.addComponent(meid,'Position',PositionComponent(pos.x,pos.y));
+        this.ecs.addComponent(meid,'Machine',MachineComponent(mType));
+        this.ecs.addComponent(meid,'Render',RenderComponent('M','#ffaa00'));
+        this.addMessage('Machine placed: '+mType+'!');
+        break;
+      }
+      case 3: {
+        if (energy.energy<25) { this.addMessage('Not enough energy!'); return; }
+        energy.energy-=25;
+        const evTypes=['NATURAL_DISASTER','MYSTERIOUS_ARTIFACT','SCAVENGER_RAID','WEATHER_ANOMALY'];
+        this.triggerEvent(evTypes[Math.floor(this.rng()*evTypes.length)]);
+        break;
+      }
+    }
+    this.playerActions.push({ability:index,tick:this.tick});
+  }
+  getNearestFaction(pos) {
+    let best=-1, bestDist=999;
+    for (const eid of this.ecs.getEntitiesWith('Position','FactionComp')) {
+      if (eid===this.playerId) continue;
+      const p=this.ecs.getComponent(eid,'Position'), f=this.ecs.getComponent(eid,'FactionComp');
+      if (!f||f.factionId<0) continue;
+      const d=Math.abs(p.x-pos.x)+Math.abs(p.y-pos.y);
+      if (d<bestDist) { bestDist=d; best=f.factionId; }
+    }
+    return best;
+  }
+  interact() {
+    const pos=this.getPlayerPos(); if (!pos) return;
+    const tile=this.world.get(pos.x,pos.y);
+    if (tile===TILES.SETTLEMENT) {
+      this.addMessage('You trade with settlers. (+wood +stone)');
+      const inv=this.ecs.getComponent(this.playerId,'Inventory');
+      if (inv) { inv.add('wood',2); inv.add('stone',1); }
+    } else if (tile===TILES.RUINS) {
+      this.addMessage('You scavenge the ruins...');
+      if (this.rng()<0.4) {
+        const loot=['iron','wood','stone','machine_part','artifact'];
+        const item=loot[Math.floor(this.rng()*loot.length)];
+        const inv=this.ecs.getComponent(this.playerId,'Inventory');
+        if (inv) { inv.add(item); this.addMessage('Found: '+item+'!'); }
+      } else this.addMessage('Nothing useful here.');
+    } else if (tile===TILES.ANOMALY) {
+      this.addMessage('The anomaly pulses! (+30 energy)');
+      const en=this.ecs.getComponent(this.playerId,'Energy');
+      if (en) en.energy=Math.min(en.maxEnergy,en.energy+30);
+      this.entropy=Math.min(100,this.entropy+5);
+    } else {
+      const nearby=this.ecs.getEntitiesWith('Position','AI').find(eid=>{
+        const p=this.ecs.getComponent(eid,'Position');
+        return p&&Math.abs(p.x-pos.x)<=1&&Math.abs(p.y-pos.y)<=1;
+      });
+      if (nearby) {
+        const ai=this.ecs.getComponent(nearby,'AI');
+        const fc=this.ecs.getComponent(nearby,'FactionComp');
+        const fn=(fc&&fc.factionId>=0&&fc.factionId<FACTIONS.length)?FACTIONS[fc.factionId].name:'Unknown';
+        this.addMessage('['+ai.type+'/'+fn+']: '+this.getNPCDialogue(ai.type));
+        ai.memory.push('met player at tick '+this.tick);
+      } else this.addMessage('Nothing to interact with here.');
+    }
+  }
+  getNPCDialogue(type) {
+    const d={
+      settler:['The land provides.','Stay near the settlement.','Seen any raiders?'],
+      raider:['Your supplies are mine!','Get out!','*growls*'],
+      trader:['Wares for sale!','Roads are dangerous.','Good day, traveler.'],
+      wanderer:['The world is vast...','I follow no path.','Strange times.'],
+      guardian:['Halt! State your business.','None shall pass.','Move along.'],
+      scavenger:['*rummages*','Fire means resources!','Every ruin has treasure.']
+    };
+    const opts=d[type]||['...'];
+    return opts[Math.floor(this.rng()*opts.length)];
+  }
+  craft() {
+    const inv=this.ecs.getComponent(this.playerId,'Inventory'); if (!inv) return;
+    if (inv.count('wood')>=1&&inv.count('stone')>=1) {
+      inv.remove('wood'); inv.remove('stone'); inv.add('fire_starter');
+      this.addMessage('Crafted: fire_starter! (C again near forest to ignite)');
+    } else if (inv.count('iron')>=1&&inv.count('wood')>=1) {
+      inv.remove('iron'); inv.remove('wood'); inv.add('machine_part');
+      this.addMessage('Crafted: machine_part!');
+    } else if (inv.count('fire_starter')>=1) {
+      inv.remove('fire_starter');
+      const pos=this.getPlayerPos();
+      let used=false;
+      for (const {dx,dy} of [{dx:1,dy:0},{dx:-1,dy:0},{dx:0,dy:1},{dx:0,dy:-1}]) {
+        const nx=pos.x+dx, ny=pos.y+dy;
+        if (this.world.inBounds(nx,ny)&&this.world.get(nx,ny)===TILES.FOREST) {
+          this.world.set(nx,ny,TILES.FIRE); this.fireAgeMap.set(ny*CONFIG.WORLD_W+nx,0);
+          this.addMessage('You ignite the forest!'); used=true; break;
+        }
+      }
+      if (!used) this.addMessage('Used fire_starter (no adjacent forest).');
+    } else this.addMessage('No recipe. Need wood+stone or iron+wood.');
+  }
+  movePlayer(dx,dy) {
+    if (this.state!=='PLAYING') return;
+    const pos=this.getPlayerPos(); if (!pos) return;
+    if (this.invertedGravity) { dx=-dx; dy=-dy; }
+    const nx=pos.x+dx, ny=pos.y+dy;
+    if (!this.world.inBounds(nx,ny)) return;
+    const info=TILE_INFO[this.world.get(nx,ny)];
+    if (!info||!info.passable) { this.addMessage((info?info.name:'?')+' blocks your path.'); return; }
+    pos.x=nx; pos.y=ny;
+    if (info.slow) { const en=this.ecs.getComponent(this.playerId,'Energy'); if (en) en.energy=Math.max(0,en.energy-2); }
+    if (this.rng()<0.05) {
+      const items=['wood','stone','iron'];
+      const item=items[Math.floor(this.rng()*items.length)];
+      const playerInventory=this.ecs.getComponent(this.playerId,'Inventory');
+      if (playerInventory) { playerInventory.add(item); this.addMessage('Found '+item+'!'); }
+    }
+  }
+}
+
+// === MINIMAP ===
+class MiniMap {
+  constructor() {
+    this.canvas=document.createElement('canvas');
+    this.canvas.width=CONFIG.WORLD_W; this.canvas.height=CONFIG.WORLD_H;
+    this.canvas.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:'+(CONFIG.WORLD_W*2)+'px;height:'+(CONFIG.WORLD_H*2)+'px;image-rendering:pixelated;';
+    this.overlay=document.createElement('div');
+    this.overlay.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);display:none;z-index:100;';
+    this.overlay.appendChild(this.canvas);
+    const cb=document.createElement('button');
+    cb.textContent='[M] Close Map';
+    cb.style.cssText='position:absolute;top:10px;right:10px;background:#333;color:#fff;border:1px solid #666;padding:5px 12px;cursor:pointer;font-family:monospace;font-size:13px;';
+    cb.onclick=()=>this.hide();
+    this.overlay.appendChild(cb);
+    const t=document.createElement('div');
+    t.style.cssText='position:absolute;top:12px;left:50%;transform:translateX(-50%);color:#cc88ff;font-family:monospace;font-size:16px;font-weight:bold;';
+    t.textContent='WORLD MAP';
+    this.overlay.appendChild(t);
+    document.body.appendChild(this.overlay);
+    this.visible=false;
+  }
+  show(world,game) { this.visible=true; this.overlay.style.display='block'; this.render(world,game); }
+  hide() { this.visible=false; this.overlay.style.display='none'; }
+  toggle(world,game) { this.visible?this.hide():this.show(world,game); }
+  render(world,game) {
+    const ctx=this.canvas.getContext('2d');
+    const img=ctx.createImageData(CONFIG.WORLD_W,CONFIG.WORLD_H);
+    for (let y=0; y<CONFIG.WORLD_H; y++) for (let x=0; x<CONFIG.WORLD_W; x++) {
+      const info=TILE_INFO[world.get(x,y)]; if (!info) continue;
+      const i=(y*CONFIG.WORLD_W+x)*4;
+      img.data[i]=parseInt(info.color.slice(1,3),16);
+      img.data[i+1]=parseInt(info.color.slice(3,5),16);
+      img.data[i+2]=parseInt(info.color.slice(5,7),16);
+      img.data[i+3]=255;
+    }
+    for (let y=0; y<CONFIG.WORLD_H; y++) for (let x=0; x<CONFIG.WORLD_W; x++)
+      if (world.get(x,y)===TILES.FIRE) {
+        const i=(y*CONFIG.WORLD_W+x)*4;
+        img.data[i]=255; img.data[i+1]=60; img.data[i+2]=0;
+      }
+    ctx.putImageData(img,0,0);
+    const pp=game.getPlayerPos();
+    if (pp) { ctx.fillStyle='#ffffff'; ctx.fillRect(pp.x-1,pp.y-1,3,3); }
+    for (const s of world.settlements) { ctx.fillStyle='#ffff00'; ctx.fillRect(s.x-1,s.y-1,3,3); }
+    for (const a of world.anomalies) { ctx.fillStyle='#cc44ff'; ctx.fillRect(a.x,a.y,2,2); }
+    for (const eid of game.ecs.getEntitiesWith('Position','AI')) {
+      const p=game.ecs.getComponent(eid,'Position'), fc=game.ecs.getComponent(eid,'FactionComp');
+      if (!p) continue;
+      ctx.fillStyle=(fc&&fc.factionId>=0&&fc.factionId<FACTIONS.length)?FACTIONS[fc.factionId].color:'#888';
+      ctx.fillRect(p.x,p.y,1,1);
+    }
+    ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=1;
+    ctx.strokeRect(game.camX,game.camY,CONFIG.VIEW_W,CONFIG.VIEW_H);
+  }
+}
+
+// === INPUT HANDLER ===
+const GAME_KEYS=new Set(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','W','a','A','s','S','d','D','e','E','c','C','m','M','p','P','1','2','3','4','/','?','Escape']);
+document.addEventListener('keydown',e=>{
+  if (GAME_KEYS.has(e.key)) e.preventDefault();
+  if (gameState.state==='TITLE') {
+    if (e.key==='Enter') { const si=document.getElementById('seedInput'); startNewRun(si?(parseInt(si.value)||0):0); }
+    return;
+  }
+  if (gameState.state==='GAMEOVER') {
+    if (e.key==='Enter'||e.key===' ') startNewRun(0);
+    return;
+  }
+  const game=gameState.game; if (!game) return;
+  switch (e.key) {
+    case 'ArrowUp':   case 'w': case 'W': game.movePlayer(0,-1); break;
+    case 'ArrowDown': case 's': case 'S': game.movePlayer(0,1); break;
+    case 'ArrowLeft': case 'a': case 'A': game.movePlayer(-1,0); break;
+    case 'ArrowRight':case 'd': case 'D': game.movePlayer(1,0); break;
+    case 'e': case 'E': game.interact(); break;
+    case 'c': case 'C': game.craft(); break;
+    case '1': game.useAbility(0); break;
+    case '2': game.useAbility(1); break;
+    case '3': game.useAbility(2); break;
+    case '4': game.useAbility(3); break;
+    case 'm': case 'M': if (game.world) miniMap.toggle(game.world,game); break;
+    case 'p': case 'P':
+      game.state=game.state==='PAUSED'?'PLAYING':'PAUSED';
+      game.addMessage(game.state==='PAUSED'?'Game paused.':'Game resumed.'); break;
+    case '/': case '?': showHelp(); break;
+    case 'Escape': if (miniMap.visible) miniMap.hide(); break;
+  }
+});
+
+// === INIT ===
+const gameState={state:'TITLE',game:null,runNumber:0,simInterval:null};
+
+function startNewRun(seed) {
+  gameState.runNumber++;
+  // Truncate timestamp to 32 bits to keep seed within the range expected by mulberry32
+  const actualSeed=(seed!==null&&seed!==undefined&&!isNaN(seed))?seed:(Date.now()&0xffffffff);
+  try { gameState.game=new Game(actualSeed); } catch(err) { console.error('Game init error:',err); return; }
+  gameState.state='PLAYING'; hideOverlay();
+  if (gameState.simInterval) clearInterval(gameState.simInterval);
+  gameState.simInterval=setInterval(()=>{
+    if (!gameState.game) return;
+    if (gameState.state==='PLAYING') gameState.game.simulateTick();
+    if (gameState.game.state==='GAMEOVER'&&gameState.state!=='GAMEOVER') {
+      gameState.state='GAMEOVER'; showGameOver();
+    }
+  },CONFIG.SIM_INTERVAL);
+}
+
+function showTitle() {
+  let scores=[];
+  try { scores=JSON.parse(localStorage.getItem('entropyScores')||'[]'); } catch(e) {}
+  const sh=scores.slice(0,5).map((s,i)=>'<div class="score-entry">#'+(i+1)+' &mdash; Tick: <b>'+s.tick+'</b> | Events: '+s.events+' | Seed: '+s.seed+'</div>').join('');
+  document.getElementById('overlay').innerHTML=`
+    <div class="overlay-box">
+      <pre> ___ _  _ _____ ___  ___  _____   __
+| __| \| |_   _| _ \/ _ \| _ \ \ / /
+| _|| .\` | | | |   / (_) |  _/ \ V /
+|___|_|\_| |_| |_|_\\___/|_|   |_|
+ ___ _  _  ___ ___ _  _ ___
+| __| \| |/ __|_ _| \| | __|
+| _|| .\` | (_ || || .\` | _|
+|___|_|\_|\___|___|_|\_|___|</pre>
+      <p style="color:#cc88ff;font-size:15px;margin:6px 0;">A Roguelike Simulation of Emergent Chaos</p>
+      <br>
+      <p>Enter seed (leave blank for random):</p>
+      <input type="number" id="seedInput" placeholder="random seed" min="0">
+      <br><br>
+      <button id="btnStartRun">&#9654; START NEW RUN</button>
+      <br><br>
+      ${scores.length>0?'<p style="color:#664499;margin-bottom:4px;font-size:12px;">HIGH SCORES:</p>'+sh:''}
+      <br>
+      <p style="color:#445566;font-size:11px;">WASD/Arrows: Move | E: Interact | C: Craft | 1-4: Abilities | M: Map | /: Help</p>
+    </div>`;
+  document.getElementById('overlay').style.display='flex';
+  gameState.state='TITLE';
+  document.getElementById('btnStartRun').addEventListener('click', function() {
+    const v = document.getElementById('seedInput').value;
+    startNewRun(v !== '' ? parseInt(v, 10) : null);
+  });
+}
+
+function showGameOver() {
+  const game=gameState.game; if (!game) return;
+  const gameSeed=game.seed;
+  document.getElementById('overlay').innerHTML=`
+    <div class="overlay-box">
+      <h2>&#9889; YOU HAVE FALLEN &#9889;</h2>
+      <p style="color:#664499;font-size:12px;">Run #${gameState.runNumber}</p>
+      <br>
+      <p>Ticks Survived: <span style="color:#cc88ff">${game.tick}</span></p>
+      <p>Events Witnessed: <span style="color:#cc88ff">${game.events.eventHistory.length}</span></p>
+      <p>Entropy at Death: <span style="color:#ff8800">${Math.floor(game.entropy)}%</span></p>
+      <p>Seed: <span style="color:#664499">${gameSeed}</span></p>
+      <br>
+      <button id="btnNewRun">&#8634; New Run</button>
+      <button id="btnSameSeed">&#8634; Same Seed</button>
+      <button id="btnTitle">&#8962; Title</button>
+    </div>`;
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('btnNewRun').addEventListener('click', () => startNewRun(null));
+  document.getElementById('btnSameSeed').addEventListener('click', () => startNewRun(gameSeed));
+  document.getElementById('btnTitle').addEventListener('click', showTitle);
+}
+
+function showHelp() {
+  document.getElementById('overlay').innerHTML=`
+    <div class="overlay-box" style="text-align:left;min-width:480px;">
+      <h2 style="text-align:center;">HELP</h2>
+      <br>
+      <p style="color:#ccaa44;font-weight:bold;">MOVEMENT</p>
+      <p>WASD or Arrow Keys to move through the world.</p>
+      <br>
+      <p style="color:#ccaa44;font-weight:bold;">ACTIONS</p>
+      <p><b>E</b> &mdash; Interact: talk to NPCs, loot ruins/settlements, touch anomalies</p>
+      <p><b>C</b> &mdash; Craft: wood+stone=fire_starter | iron+wood=machine_part</p>
+      <p><b>M</b> &mdash; Toggle world map</p>
+      <p><b>P</b> &mdash; Pause/Resume</p>
+      <br>
+      <p style="color:#ccaa44;font-weight:bold;">ABILITIES (cost energy)</p>
+      <p><b>1</b> [20en] Terraform - Cycle terrain at your position</p>
+      <p><b>2</b> [15en] Signal Faction - Improve faction relations</p>
+      <p><b>3</b> [30en] Build Machine - Place a machine (needs machine_part)</p>
+      <p><b>4</b> [25en] Trigger Event - Force a random world event</p>
+      <br>
+      <p style="color:#ccaa44;font-weight:bold;">ENTROPY METER</p>
+      <p>Rises when world is stable. At 80%: minor chaos. At 100%: SURGE!</p>
+      <br>
+      <button id="btnCloseHelp" style="width:100%;margin-top:8px;">CLOSE [Esc]</button>
+    </div>`;
+  document.getElementById('overlay').style.display='flex';
+  document.getElementById('btnCloseHelp').addEventListener('click', hideOverlay);
+}
+
+function hideOverlay() { document.getElementById('overlay').style.display='none'; }
+
+const gameCanvas=document.getElementById('gameCanvas'), panelCanvas=document.getElementById('panelCanvas');
+gameCanvas.width=CONFIG.CANVAS_W; gameCanvas.height=CONFIG.CANVAS_H;
+panelCanvas.width=CONFIG.PANEL_W; panelCanvas.height=CONFIG.CANVAS_H;
+
+const renderer=new Renderer(gameCanvas,panelCanvas);
+const miniMap=new MiniMap();
+
+function renderLoop() {
+  if ((gameState.state==='PLAYING'||gameState.state==='PAUSED')&&gameState.game)
+    renderer.render(gameState.game,gameState.game.ecs,gameState.game.world);
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
+
+showTitle();
 </script>
-<br>
-<button onmousedown="accelerate(-0.2)" onmouseup="accelerate(0.05)">ACCELERATE</button>
-<p>Use the ACCELERATE button to stay in the air</p>
-<p>How long can you stay alive?</p>
 </body>
 </html>
