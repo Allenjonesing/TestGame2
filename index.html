@@ -249,6 +249,8 @@ const CONFIG = {
   ENTROPY_CHAOS_THRESHOLD: 80,
   ENTROPY_SURGE_THRESHOLD: 100,
   FACTION_BLUR_DURATION: 10, // ticks a faction-blur reality glitch lasts
+  BOTTOM_BAR_H: 32,          // height of the bottom bar in pixels
+  DPAD_REPEAT_MS: 120,       // milliseconds between repeated D-pad moves while held
 };
 
 // === SEEDED RNG ===
@@ -1180,8 +1182,8 @@ class Renderer {
     }
     const entrPct=game.entropy/100;
     const entrColor=game.entropy>80?'#ff3300':game.entropy>60?'#ff8800':game.entropy>40?'#cc6600':'#9933cc';
-    ctx.fillStyle='#aaa'; ctx.fillText('🌀 EN:',8,y);
-    this.drawBar(ctx,44,y-8,110,13,entrPct,entrColor,'#12001a');
+    ctx.fillStyle='#aaa'; ctx.fillText('🌀 ENTR:',8,y);
+    this.drawBar(ctx,58,y-8,96,13,entrPct,entrColor,'#12001a');
     ctx.fillStyle=entrColor; ctx.fillText(Math.floor(game.entropy)+'%',158,y); y+=lh;
     ctx.fillStyle='#3a2060'; ctx.fillText('──────────────────',8,y); y+=lh;
     // Weather & Status
@@ -1901,7 +1903,7 @@ const miniMap=new MiniMap();
 // === CANVAS SCALING FOR MOBILE ===
 function applyScale() {
   const totalW=CONFIG.CANVAS_W+CONFIG.PANEL_W;
-  const totalH=CONFIG.CANVAS_H+32; // +bottomBar height approx
+  const totalH=CONFIG.CANVAS_H+CONFIG.BOTTOM_BAR_H;
   const availW=window.innerWidth;
   const availH=window.innerHeight;
   // Leave room for touch controls on mobile
@@ -1937,7 +1939,7 @@ function bindDpadBtn(id, dx, dy) {
   const start=e=>{
     e.preventDefault();
     if (gameState.game) gameState.game.movePlayer(dx,dy);
-    interval=setInterval(()=>{ if (gameState.game) gameState.game.movePlayer(dx,dy); },120);
+    interval=setInterval(()=>{ if (gameState.game) gameState.game.movePlayer(dx,dy); },CONFIG.DPAD_REPEAT_MS);
   };
   const stop=e=>{ clearInterval(interval); interval=null; };
   el.addEventListener('touchstart',start,{passive:false});
