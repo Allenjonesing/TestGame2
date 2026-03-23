@@ -2,36 +2,237 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Entropy Engine</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { background:#000; color:#fff; font-family:monospace; overflow:hidden; }
+    body {
+      background: radial-gradient(ellipse at top, #0d0820 0%, #000008 100%);
+      color:#fff; font-family:'Courier New',monospace; overflow:hidden;
+      min-height:100vh; touch-action:none;
+    }
+    #scaleWrapper {
+      transform-origin: top left;
+      display: inline-block;
+    }
     #container { display:flex; flex-direction:column; }
     #gameRow { display:flex; }
     #gameCanvas { display:block; }
     #panelCanvas { display:block; }
-    #bottomBar { background:#0a0a12; border-top:1px solid #333; padding:6px 10px; font-size:11px; color:#888; white-space:nowrap; }
-    #overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.88); display:flex; align-items:center; justify-content:center; z-index:50; }
-    .overlay-box { background:#0a0a18; border:1px solid #664499; padding:30px 40px; text-align:center; min-width:400px; max-width:600px; }
-    .overlay-box h2 { color:#cc88ff; font-size:22px; margin-bottom:10px; }
-    .overlay-box p { color:#aaa; margin:5px 0; font-size:13px; }
-    .overlay-box input { background:#111; border:1px solid #555; color:#fff; padding:5px 10px; margin:10px 0; font-family:monospace; width:200px; text-align:center; font-size:14px; }
-    .overlay-box button { background:#332255; border:1px solid #664499; color:#cc88ff; padding:8px 20px; margin:5px; cursor:pointer; font-family:monospace; font-size:13px; }
-    .overlay-box button:hover { background:#443366; }
-    .overlay-box pre { color:#7744aa; font-size:10px; line-height:1.3; text-align:left; display:inline-block; }
-    .score-entry { color:#88aacc; font-size:12px; margin:2px 0; }
+    #bottomBar {
+      background:linear-gradient(to right,#0a0818,#0d0d20,#0a0818);
+      border-top:1px solid #3a2060;
+      padding:6px 10px; font-size:11px; color:#7a6aaa; white-space:nowrap;
+      letter-spacing:0.5px;
+    }
+
+    /* === OVERLAY === */
+    #overlay {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(0,0,0,0.92);
+      display:flex; align-items:center; justify-content:center; z-index:50;
+      backdrop-filter:blur(3px);
+    }
+    .overlay-box {
+      background:linear-gradient(160deg,#0c0822 0%,#100a28 50%,#0a0618 100%);
+      border:1px solid #7744bb;
+      box-shadow: 0 0 40px rgba(120,60,200,0.4), inset 0 0 40px rgba(80,30,120,0.1);
+      padding:28px 36px; text-align:center;
+      min-width:340px; max-width:600px;
+      max-height:90vh; overflow-y:auto;
+    }
+    .overlay-box h2 { color:#cc88ff; font-size:22px; margin-bottom:8px; text-shadow:0 0 12px #9933cc; }
+    .overlay-box p { color:#b0a0cc; margin:5px 0; font-size:13px; line-height:1.5; }
+    .overlay-box input {
+      background:#0a0818; border:1px solid #664499; color:#ddd;
+      padding:7px 12px; margin:10px 0; font-family:monospace;
+      width:200px; text-align:center; font-size:14px; border-radius:3px;
+    }
+    .overlay-box input:focus { outline:none; border-color:#aa66ff; box-shadow:0 0 8px rgba(150,80,255,0.4); }
+    .overlay-box button {
+      background:linear-gradient(135deg,#3d1a66,#2a1045);
+      border:1px solid #7744bb; color:#cc88ff;
+      padding:10px 22px; margin:5px; cursor:pointer;
+      font-family:monospace; font-size:13px; border-radius:3px;
+      transition:all 0.15s; letter-spacing:0.5px;
+    }
+    .overlay-box button:hover, .overlay-box button:active {
+      background:linear-gradient(135deg,#5a2888,#3d1566);
+      box-shadow:0 0 12px rgba(180,100,255,0.5);
+      transform:translateY(-1px);
+    }
+    .overlay-box pre { color:#8855bb; font-size:10px; line-height:1.3; text-align:left; display:inline-block; }
+    .score-entry { color:#7799bb; font-size:12px; margin:2px 0; }
+    .help-section { color:#ddbb55; font-weight:bold; margin:10px 0 4px; font-size:13px; }
+    .help-key { color:#88ddff; font-weight:bold; }
+    .tip-box {
+      background:rgba(100,60,200,0.15); border:1px solid #553399;
+      padding:8px 12px; margin:8px 0; border-radius:4px; font-size:12px; color:#bbaadd;
+      text-align:left;
+    }
+
+    /* === TUTORIAL OVERLAY === */
+    #tutorialOverlay {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(0,0,0,0.93); display:none;
+      align-items:center; justify-content:center; z-index:60;
+      backdrop-filter:blur(4px);
+    }
+    #tutorialOverlay.visible { display:flex; }
+    .tutorial-box {
+      background:linear-gradient(160deg,#0c0822,#12082e,#0a0618);
+      border:2px solid #9955ee;
+      box-shadow:0 0 50px rgba(150,80,240,0.5), inset 0 0 30px rgba(100,40,160,0.1);
+      padding:30px 36px; max-width:500px; width:92vw;
+      border-radius:6px; text-align:center;
+    }
+    .tutorial-step { color:#aa66ff; font-size:11px; letter-spacing:2px; margin-bottom:8px; }
+    .tutorial-title { color:#eeddff; font-size:20px; font-weight:bold; margin-bottom:14px; text-shadow:0 0 15px #bb88ff; }
+    .tutorial-body { color:#c0b0dc; font-size:14px; line-height:1.7; margin-bottom:20px; text-align:left; }
+    .tutorial-body b { color:#ffdd88; }
+    .tutorial-body em { color:#88ffcc; font-style:normal; }
+    .tutorial-nav { display:flex; justify-content:center; gap:12px; margin-top:8px; }
+    .tutorial-nav button {
+      background:linear-gradient(135deg,#3d1a66,#2a1045);
+      border:1px solid #7744bb; color:#cc88ff;
+      padding:10px 24px; cursor:pointer; font-family:monospace;
+      font-size:13px; border-radius:3px; transition:all 0.15s;
+    }
+    .tutorial-nav button:hover { background:linear-gradient(135deg,#5a2888,#3d1566); }
+    .tutorial-dots { display:flex; justify-content:center; gap:6px; margin:12px 0; }
+    .tutorial-dot { width:8px; height:8px; border-radius:50%; background:#333; transition:all 0.2s; }
+    .tutorial-dot.active { background:#aa66ff; box-shadow:0 0 6px #aa66ff; }
+    .tutorial-icon { font-size:36px; margin-bottom:10px; }
+
+    /* === TOUCH CONTROLS === */
+    #touchControls {
+      position:fixed; bottom:0; left:0; width:100%; z-index:40;
+      display:none;
+      background:linear-gradient(to top,rgba(5,2,15,0.98),rgba(5,2,15,0.85));
+      border-top:1px solid #3a2060;
+      padding:10px 12px 14px;
+      user-select:none;
+    }
+    #touchControlsInner {
+      display:flex; align-items:center; justify-content:space-between;
+      max-width:520px; margin:0 auto;
+    }
+    #dpad {
+      display:grid; grid-template-columns:repeat(3,48px); grid-template-rows:repeat(3,48px);
+      gap:3px; flex-shrink:0;
+    }
+    .dpad-btn {
+      background:linear-gradient(135deg,#1e0e38,#150b2a);
+      border:1px solid #5533aa; color:#aa88ff;
+      display:flex; align-items:center; justify-content:center;
+      font-size:20px; cursor:pointer; border-radius:5px;
+      transition:all 0.08s; -webkit-tap-highlight-color:transparent;
+      width:48px; height:48px;
+    }
+    .dpad-btn:active { background:linear-gradient(135deg,#3d1a66,#2a1045); box-shadow:0 0 10px rgba(160,100,255,0.6); transform:scale(0.93); }
+    .dpad-center { background:transparent; border:none; pointer-events:none; }
+    #actionBtns {
+      display:grid; grid-template-columns:repeat(2,52px); gap:6px; flex-shrink:0;
+    }
+    #abilityBtns {
+      display:grid; grid-template-columns:repeat(2,52px); gap:6px; flex-shrink:0;
+    }
+    .act-btn {
+      background:linear-gradient(135deg,#1a1040,#120830);
+      border:1px solid #443388; color:#aaccff;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      font-size:11px; font-family:monospace; cursor:pointer; border-radius:5px;
+      transition:all 0.08s; -webkit-tap-highlight-color:transparent;
+      width:52px; height:52px; text-align:center; line-height:1.3;
+    }
+    .act-btn .btn-key { font-size:16px; font-weight:bold; color:#cc88ff; }
+    .act-btn:active { background:linear-gradient(135deg,#3322aa,#221066); box-shadow:0 0 10px rgba(100,80,220,0.6); transform:scale(0.93); }
+    .abl-btn {
+      background:linear-gradient(135deg,#0e1830,#080e20);
+      border:1px solid #2244aa; color:#88aaff;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      font-size:10px; font-family:monospace; cursor:pointer; border-radius:5px;
+      transition:all 0.08s; -webkit-tap-highlight-color:transparent;
+      width:52px; height:52px; text-align:center; line-height:1.3;
+    }
+    .abl-btn .btn-num { font-size:18px; font-weight:bold; color:#66aaff; }
+    .abl-btn:active { background:linear-gradient(135deg,#1a3366,#0e1a44); box-shadow:0 0 10px rgba(80,120,255,0.6); transform:scale(0.93); }
+    .touch-divider { width:1px; height:100px; background:linear-gradient(to bottom,transparent,#3a2060,transparent); flex-shrink:0; }
+
+    /* === RESPONSIVE === */
+    @media (max-width: 900px) {
+      #touchControls { display:block; }
+    }
+    @media (pointer: coarse) {
+      #touchControls { display:block; }
+    }
   </style>
 </head>
 <body>
-<div id="container">
-  <div id="gameRow">
-    <canvas id="gameCanvas"></canvas>
-    <canvas id="panelCanvas"></canvas>
-  </div>
-  <div id="bottomBar">
-    [WASD/Arrows] Move &nbsp;|&nbsp; [E] Interact &nbsp;|&nbsp; [C] Craft &nbsp;|&nbsp; [1-4] Abilities &nbsp;|&nbsp; [M] Map &nbsp;|&nbsp; [P] Pause &nbsp;|&nbsp; [/] Help
+<div id="scaleWrapper">
+  <div id="container">
+    <div id="gameRow">
+      <canvas id="gameCanvas"></canvas>
+      <canvas id="panelCanvas"></canvas>
+    </div>
+    <div id="bottomBar">
+      ⌨ <span style="color:#9977cc">[WASD/↑↓←→]</span> Move &nbsp;|&nbsp;
+      <span style="color:#9977cc">[E]</span> Interact &nbsp;|&nbsp;
+      <span style="color:#9977cc">[C]</span> Craft &nbsp;|&nbsp;
+      <span style="color:#9977cc">[1-4]</span> Abilities &nbsp;|&nbsp;
+      <span style="color:#9977cc">[M]</span> Map &nbsp;|&nbsp;
+      <span style="color:#9977cc">[P]</span> Pause &nbsp;|&nbsp;
+      <span style="color:#9977cc">[/]</span> Help
+    </div>
   </div>
 </div>
+
+<!-- Touch Controls -->
+<div id="touchControls">
+  <div id="touchControlsInner">
+    <div id="dpad">
+      <div></div>
+      <button class="dpad-btn" id="tcUp">▲</button>
+      <div></div>
+      <button class="dpad-btn" id="tcLeft">◀</button>
+      <div class="dpad-center"></div>
+      <button class="dpad-btn" id="tcRight">▶</button>
+      <div></div>
+      <button class="dpad-btn" id="tcDown">▼</button>
+      <div></div>
+    </div>
+    <div class="touch-divider"></div>
+    <div id="actionBtns">
+      <button class="act-btn" id="tcInteract"><span class="btn-key">E</span>Interact</button>
+      <button class="act-btn" id="tcCraft"><span class="btn-key">C</span>Craft</button>
+      <button class="act-btn" id="tcMap"><span class="btn-key">M</span>Map</button>
+      <button class="act-btn" id="tcPause"><span class="btn-key">P</span>Pause</button>
+    </div>
+    <div class="touch-divider"></div>
+    <div id="abilityBtns">
+      <button class="abl-btn" id="tcAbl1"><span class="btn-num">1</span>Terraform</button>
+      <button class="abl-btn" id="tcAbl2"><span class="btn-num">2</span>Signal</button>
+      <button class="abl-btn" id="tcAbl3"><span class="btn-num">3</span>Build</button>
+      <button class="abl-btn" id="tcAbl4"><span class="btn-num">4</span>Event</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tutorial Overlay -->
+<div id="tutorialOverlay">
+  <div class="tutorial-box">
+    <div class="tutorial-step" id="tutStep">STEP 1 / 7</div>
+    <div class="tutorial-dots" id="tutDots"></div>
+    <div class="tutorial-icon" id="tutIcon">🌍</div>
+    <div class="tutorial-title" id="tutTitle">Welcome!</div>
+    <div class="tutorial-body" id="tutBody"></div>
+    <div class="tutorial-nav">
+      <button id="tutPrev">◀ Back</button>
+      <button id="tutNext">Next ▶</button>
+    </div>
+  </div>
+</div>
+
 <div id="overlay"></div>
 <script>
 'use strict';
@@ -48,6 +249,8 @@ const CONFIG = {
   ENTROPY_CHAOS_THRESHOLD: 80,
   ENTROPY_SURGE_THRESHOLD: 100,
   FACTION_BLUR_DURATION: 10, // ticks a faction-blur reality glitch lasts
+  BOTTOM_BAR_H: 32,          // height of the bottom bar in pixels
+  DPAD_REPEAT_MS: 120,       // milliseconds between repeated D-pad moves while held
 };
 
 // === SEEDED RNG ===
@@ -123,21 +326,21 @@ const TILES = {
 };
 
 const TILE_INFO = [
-  { name: 'PLAINS',     sym: '.',  color: '#2a5020', passable: true,  flammable: false, slow: false },
-  { name: 'FOREST',     sym: 'T',  color: '#1a3a18', passable: true,  flammable: true,  slow: false },
-  { name: 'MOUNTAIN',   sym: '^',  color: '#5a5a5a', passable: false, flammable: false, slow: false },
-  { name: 'HILLS',      sym: 'n',  color: '#4a4a30', passable: true,  flammable: false, slow: false },
-  { name: 'WATER',      sym: '~',  color: '#1a3060', passable: false, flammable: false, slow: false },
-  { name: 'SHALLOW',    sym: ',',  color: '#2a4a80', passable: true,  flammable: false, slow: true  },
-  { name: 'DESERT',     sym: ':',  color: '#9a8040', passable: true,  flammable: false, slow: false },
-  { name: 'SWAMP',      sym: '%',  color: '#2a4028', passable: true,  flammable: false, slow: true  },
-  { name: 'RUINS',      sym: '#',  color: '#4a3030', passable: true,  flammable: false, slow: false },
-  { name: 'SETTLEMENT', sym: 'S',  color: '#8a6040', passable: true,  flammable: false, slow: false },
-  { name: 'ANOMALY',    sym: '?',  color: '#7a20a0', passable: true,  flammable: false, slow: false },
-  { name: 'FIRE',       sym: 'f',  color: '#cc4400', passable: true,  flammable: false, slow: false, damaging: true },
-  { name: 'ASH',        sym: 'a',  color: '#3a3a3a', passable: true,  flammable: false, slow: false },
-  { name: 'ICE',        sym: '*',  color: '#aaccee', passable: true,  flammable: false, slow: true  },
-  { name: 'ROAD',       sym: '=',  color: '#6a5040', passable: true,  flammable: false, slow: false, fast: true },
+  { name: 'PLAINS',     sym: '·',  color: '#3a7a28', passable: true,  flammable: false, slow: false },
+  { name: 'FOREST',     sym: '♣',  color: '#1a6014', passable: true,  flammable: true,  slow: false },
+  { name: 'MOUNTAIN',   sym: '▲',  color: '#887060', passable: false, flammable: false, slow: false },
+  { name: 'HILLS',      sym: '∩',  color: '#7a6a3a', passable: true,  flammable: false, slow: false },
+  { name: 'WATER',      sym: '≈',  color: '#1a4888', passable: false, flammable: false, slow: false },
+  { name: 'SHALLOW',    sym: '~',  color: '#2a6aaa', passable: true,  flammable: false, slow: true  },
+  { name: 'DESERT',     sym: '∴',  color: '#c09838', passable: true,  flammable: false, slow: false },
+  { name: 'SWAMP',      sym: '♦',  color: '#2a5a30', passable: true,  flammable: false, slow: true  },
+  { name: 'RUINS',      sym: '⌂',  color: '#6a4838', passable: true,  flammable: false, slow: false },
+  { name: 'SETTLEMENT', sym: '⊞',  color: '#cc8844', passable: true,  flammable: false, slow: false },
+  { name: 'ANOMALY',    sym: '✦',  color: '#aa30cc', passable: true,  flammable: false, slow: false },
+  { name: 'FIRE',       sym: '✦',  color: '#ff5500', passable: true,  flammable: false, slow: false, damaging: true },
+  { name: 'ASH',        sym: '·',  color: '#504040', passable: true,  flammable: false, slow: false },
+  { name: 'ICE',        sym: '❄',  color: '#88ccee', passable: true,  flammable: false, slow: true  },
+  { name: 'ROAD',       sym: '═',  color: '#887060', passable: true,  flammable: false, slow: false, fast: true },
 ];
 
 // === WORLD GENERATOR ===
@@ -820,32 +1023,58 @@ class Renderer {
     this.canvas=canvas; this.ctx=canvas.getContext('2d');
     this.panelCanvas=panelCanvas; this.panelCtx=panelCanvas.getContext('2d');
     this.flashMessages=[];
+    this.animTick=0;
   }
-  render(game,ecs,world) { this.renderWorld(game,ecs,world); this.renderPanel(game,ecs); }
+  render(game,ecs,world) { this.animTick++; this.renderWorld(game,ecs,world); this.renderPanel(game,ecs); }
   renderWorld(game,ecs,world) {
     const ctx=this.ctx;
-    ctx.fillStyle='#000'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
+    // Dark gradient background
+    const bg=ctx.createLinearGradient(0,0,0,CONFIG.CANVAS_H);
+    bg.addColorStop(0,'#04020e'); bg.addColorStop(1,'#080410');
+    ctx.fillStyle=bg; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
     const pp=game.getPlayerPos(); if (!pp) return;
     const camX=Math.max(0,Math.min(CONFIG.WORLD_W-CONFIG.VIEW_W,pp.x-Math.floor(CONFIG.VIEW_W/2)));
     const camY=Math.max(0,Math.min(CONFIG.WORLD_H-CONFIG.VIEW_H,pp.y-Math.floor(CONFIG.VIEW_H/2)));
     game.camX=camX; game.camY=camY;
-    ctx.font='11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    const TS=CONFIG.TILE_SIZE;
+    ctx.font='bold 13px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
     for (let ty=0; ty<CONFIG.VIEW_H; ty++) for (let tx=0; tx<CONFIG.VIEW_W; tx++) {
       const wx=camX+tx, wy=camY+ty;
       if (!world.inBounds(wx,wy)) continue;
-      const info=TILE_INFO[world.get(wx,wy)]; if (!info) continue;
+      const tileId=world.get(wx,wy);
+      const info=TILE_INFO[tileId]; if (!info) continue;
       const dist=Math.abs(wx-pp.x)+Math.abs(wy-pp.y);
-      const lf=Math.max(0.25,1-(dist/22)*0.75);
-      const px=tx*CONFIG.TILE_SIZE, py=ty*CONFIG.TILE_SIZE;
+      const lf=Math.max(0.18,1-(dist/24)*0.82);
+      const px=tx*TS, py=ty*TS;
       const r=parseInt(info.color.slice(1,3),16);
       const g=parseInt(info.color.slice(3,5),16);
       const b=parseInt(info.color.slice(5,7),16);
-      ctx.fillStyle='rgb('+Math.floor(r*lf)+','+Math.floor(g*lf)+','+Math.floor(b*lf)+')';
-      ctx.fillRect(px,py,CONFIG.TILE_SIZE,CONFIG.TILE_SIZE);
-      const lr=Math.min(255,r+60), lg=Math.min(255,g+60), lb=Math.min(255,b+60);
-      ctx.fillStyle='rgb('+Math.floor(lr*lf)+','+Math.floor(lg*lf)+','+Math.floor(lb*lf)+')';
-      ctx.fillText(info.sym,px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
+      // Tile background with slight gradient for depth
+      const br=Math.floor(r*lf*0.55), bg2=Math.floor(g*lf*0.55), bb=Math.floor(b*lf*0.55);
+      ctx.fillStyle='rgb('+br+','+bg2+','+bb+')';
+      ctx.fillRect(px,py,TS,TS);
+      // Subtle inner highlight for certain tiles
+      if (tileId===TILES.WATER||tileId===TILES.SHALLOW) {
+        const wave=Math.sin((wx+wy+this.animTick*0.05)*0.8)*0.12+0.12;
+        ctx.fillStyle='rgba(100,160,255,'+(wave*lf)+')';
+        ctx.fillRect(px,py+TS*0.6,TS,TS*0.4);
+      }
+      if (tileId===TILES.FIRE) {
+        const fl=Math.sin((wx*2+wy+this.animTick*0.3))*0.2+0.5;
+        ctx.fillStyle='rgba(255,'+(80+Math.floor(fl*120))+',0,'+(fl*lf)+')';
+        ctx.fillRect(px,py,TS,TS);
+      }
+      if (tileId===TILES.ANOMALY) {
+        const pu=(Math.sin(this.animTick*0.08+wx+wy)*0.3+0.3)*lf;
+        ctx.fillStyle='rgba(180,60,255,'+pu+')';
+        ctx.fillRect(px,py,TS,TS);
+      }
+      // Tile symbol
+      const lr=Math.min(255,r+80), lgc=Math.min(255,g+80), lb=Math.min(255,b+80);
+      ctx.fillStyle='rgb('+Math.floor(lr*lf)+','+Math.floor(lgc*lf)+','+Math.floor(lb*lf)+')';
+      ctx.fillText(info.sym,px+TS/2,py+TS/2);
     }
+    // Draw entities
     const sorted=[...ecs.getEntitiesWith('Position','Render')].sort((a,b)=>{
       const pa=ecs.getComponent(a,'Player'), pb=ecs.getComponent(b,'Player');
       if (pa) return 1; if (pb) return -1; return 0;
@@ -854,25 +1083,55 @@ class Renderer {
       const pos=ecs.getComponent(eid,'Position'), render=ecs.getComponent(eid,'Render');
       const tx=pos.x-camX, ty=pos.y-camY;
       if (tx<0||ty<0||tx>=CONFIG.VIEW_W||ty>=CONFIG.VIEW_H) continue;
-      const px=tx*CONFIG.TILE_SIZE, py=ty*CONFIG.TILE_SIZE;
+      const px=tx*TS, py=ty*TS;
       if (ecs.getComponent(eid,'Player')) {
-        ctx.shadowColor='#ffffff'; ctx.shadowBlur=10; ctx.fillStyle='#ffffff';
-        ctx.font='bold 12px monospace';
-        ctx.fillText('@',px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
-        ctx.shadowBlur=0; ctx.font='11px monospace';
+        // Player glow
+        const glow=ctx.createRadialGradient(px+TS/2,py+TS/2,1,px+TS/2,py+TS/2,TS*1.2);
+        glow.addColorStop(0,'rgba(200,160,255,0.35)'); glow.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=glow; ctx.fillRect(px-TS*0.5,py-TS*0.5,TS*2,TS*2);
+        ctx.shadowColor='#cc88ff'; ctx.shadowBlur=14;
+        ctx.fillStyle='#ffffff'; ctx.font='bold 14px monospace';
+        ctx.fillText('@',px+TS/2,py+TS/2);
+        ctx.shadowBlur=0; ctx.font='bold 13px monospace';
       } else {
+        // NPC glow based on faction
+        ctx.shadowColor=render.color; ctx.shadowBlur=5;
         ctx.fillStyle=render.color;
-        ctx.fillText(render.symbol,px+CONFIG.TILE_SIZE/2,py+CONFIG.TILE_SIZE/2);
+        ctx.fillText(render.symbol,px+TS/2,py+TS/2);
+        ctx.shadowBlur=0;
       }
     }
-    if (game.state==='PAUSED') {
-      ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
-      ctx.fillStyle='#ffff88'; ctx.font='bold 20px monospace';
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('PAUSED  [P] to resume',CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2);
-      ctx.font='11px monospace';
+    // Machine entities
+    for (const eid of ecs.getEntitiesWith('Position','Machine','Render')) {
+      const pos=ecs.getComponent(eid,'Position'), render=ecs.getComponent(eid,'Render');
+      const tx=pos.x-camX, ty=pos.y-camY;
+      if (tx<0||ty<0||tx>=CONFIG.VIEW_W||ty>=CONFIG.VIEW_H) continue;
+      const px=tx*TS, py=ty*TS;
+      const pulse=Math.sin(this.animTick*0.1)*0.3+0.7;
+      ctx.shadowColor='#ffaa00'; ctx.shadowBlur=8*pulse;
+      ctx.fillStyle='rgb('+Math.floor(255*pulse)+','+(Math.floor(170*pulse))+',0)';
+      ctx.fillText('⚙',px+TS/2,py+TS/2);
+      ctx.shadowBlur=0;
     }
-    if (game.invertedGravity) { ctx.fillStyle='rgba(255,0,128,0.12)'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H); }
+    if (game.state==='PAUSED') {
+      ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
+      ctx.fillStyle='#ffff88'; ctx.font='bold 22px monospace';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.shadowColor='#ffff00'; ctx.shadowBlur=20;
+      ctx.fillText('⏸  PAUSED  —  [P] to resume',CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2);
+      ctx.shadowBlur=0; ctx.font='bold 13px monospace';
+    }
+    if (game.invertedGravity) {
+      ctx.fillStyle='rgba(255,0,128,0.1)'; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
+      // Vignette edges
+      const vig=ctx.createRadialGradient(CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2,100,CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2,CONFIG.CANVAS_W*0.7);
+      vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(200,0,80,0.25)');
+      ctx.fillStyle=vig; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
+    }
+    // Vignette always
+    const vig=ctx.createRadialGradient(CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2,80,CONFIG.CANVAS_W/2,CONFIG.CANVAS_H/2,CONFIG.CANVAS_W*0.65);
+    vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.55)');
+    ctx.fillStyle=vig; ctx.fillRect(0,0,CONFIG.CANVAS_W,CONFIG.CANVAS_H);
     this.renderFlashMessages(ctx);
   }
   renderFlashMessages(ctx) {
@@ -880,86 +1139,128 @@ class Renderer {
     for (let i=this.flashMessages.length-1; i>=0; i--) {
       const fm=this.flashMessages[i]; fm.timer--;
       if (fm.timer<=0) { this.flashMessages.splice(i,1); continue; }
-      ctx.globalAlpha=Math.min(1,fm.timer/10);
+      const alpha=Math.min(1,fm.timer/15);
+      ctx.globalAlpha=alpha;
+      ctx.shadowColor=fm.color||'#ff0'; ctx.shadowBlur=10;
       ctx.fillStyle=fm.color||'#ff0'; ctx.font='bold 14px monospace';
-      ctx.fillText(fm.text,CONFIG.CANVAS_W/2,30+i*22);
+      ctx.fillText(fm.text,CONFIG.CANVAS_W/2,28+i*24);
     }
-    ctx.globalAlpha=1; ctx.font='11px monospace';
+    ctx.globalAlpha=1; ctx.shadowBlur=0; ctx.font='bold 13px monospace';
   }
   renderPanel(game,ecs) {
     const ctx=this.panelCtx, W=CONFIG.PANEL_W, H=CONFIG.CANVAS_H;
-    ctx.fillStyle='#0a0a12'; ctx.fillRect(0,0,W,H);
-    ctx.fillStyle='#333'; ctx.fillRect(0,0,1,H);
-    let y=15; const lh=16;
+    // Panel background gradient
+    const panBg=ctx.createLinearGradient(0,0,W,H);
+    panBg.addColorStop(0,'#08041a'); panBg.addColorStop(1,'#060210');
+    ctx.fillStyle=panBg; ctx.fillRect(0,0,W,H);
+    // Left border glow
+    const borderGrad=ctx.createLinearGradient(0,0,0,H);
+    borderGrad.addColorStop(0,'#1a0830'); borderGrad.addColorStop(0.5,'#5533aa'); borderGrad.addColorStop(1,'#1a0830');
+    ctx.fillStyle=borderGrad; ctx.fillRect(0,0,2,H);
+    let y=14; const lh=17;
     ctx.textAlign='left'; ctx.textBaseline='middle';
+    // Title
     ctx.fillStyle='#cc88ff'; ctx.font='bold 14px monospace';
-    ctx.fillText('ENTROPY ENGINE',10,y); y+=lh;
-    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
+    ctx.shadowColor='#aa55ff'; ctx.shadowBlur=8;
+    ctx.fillText('✦ ENTROPY ENGINE',8,y); y+=lh;
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#3a2060'; ctx.fillText('──────────────────',8,y); y+=lh;
+    // Stats
     ctx.font='12px monospace';
     const hp=ecs.getComponent(game.playerId,'Health'), en=ecs.getComponent(game.playerId,'Energy');
     if (hp) {
-      ctx.fillStyle='#aaa'; ctx.fillText('HP:',10,y);
-      this.drawBar(ctx,40,y-9,140,12,hp.hp/hp.maxHp,'#cc2222','#331111');
-      ctx.fillStyle='#ccc'; ctx.fillText(hp.hp+'/'+hp.maxHp,186,y); y+=lh;
+      const hpPct=hp.hp/hp.maxHp;
+      ctx.fillStyle='#aaa'; ctx.fillText('❤ HP:',8,y);
+      this.drawBar(ctx,44,y-8,138,13,hpPct,
+        hpPct>0.5?'#22dd44':hpPct>0.25?'#ddaa22':'#ee2222','#1a0808');
+      ctx.fillStyle='#ccc'; ctx.fillText(hp.hp+'/'+hp.maxHp,188,y); y+=lh;
     }
     if (en) {
-      ctx.fillStyle='#aaa'; ctx.fillText('EN:',10,y);
-      this.drawBar(ctx,40,y-9,140,12,en.energy/en.maxEnergy,'#2288cc','#112233');
-      ctx.fillStyle='#ccc'; ctx.fillText(Math.floor(en.energy)+'/'+en.maxEnergy,186,y); y+=lh;
+      ctx.fillStyle='#aaa'; ctx.fillText('⚡ EN:',8,y);
+      this.drawBar(ctx,44,y-8,138,13,en.energy/en.maxEnergy,'#2299ee','#081828');
+      ctx.fillStyle='#ccc'; ctx.fillText(Math.floor(en.energy)+'/'+en.maxEnergy,188,y); y+=lh;
     }
-    ctx.fillStyle='#aaa'; ctx.fillText('ENTR:',10,y);
-    const ec=game.entropy>80?'#ff2200':game.entropy>60?'#ff8800':'#8822cc';
-    this.drawBar(ctx,52,y-9,120,12,game.entropy/100,ec,'#1a0a2a');
-    ctx.fillStyle='#ccc'; ctx.fillText(Math.floor(game.entropy)+'%',178,y); y+=lh;
-    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
-    ctx.fillStyle='#88aacc'; ctx.font='11px monospace';
-    ctx.fillText('WEATHER: '+game.weather.current,10,y); y+=lh;
-    ctx.fillText('TICK: '+game.tick,10,y); y+=lh;
-    ctx.fillText('STATUS: '+game.factions.getPlayerRelation(game),10,y); y+=lh;
-    if (game.invertedGravity) { ctx.fillStyle='#ff4488'; ctx.fillText('⚠ INVERTED GRAVITY',10,y); y+=lh; }
-    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
-    ctx.fillStyle='#ccaa44'; ctx.font='bold 11px monospace'; ctx.fillText('FACTIONS:',10,y); y+=lh;
+    const entrPct=game.entropy/100;
+    const entrColor=game.entropy>80?'#ff3300':game.entropy>60?'#ff8800':game.entropy>40?'#cc6600':'#9933cc';
+    ctx.fillStyle='#aaa'; ctx.fillText('🌀 ENTR:',8,y);
+    this.drawBar(ctx,58,y-8,96,13,entrPct,entrColor,'#12001a');
+    ctx.fillStyle=entrColor; ctx.fillText(Math.floor(game.entropy)+'%',158,y); y+=lh;
+    ctx.fillStyle='#3a2060'; ctx.fillText('──────────────────',8,y); y+=lh;
+    // Weather & Status
+    ctx.font='11px monospace';
+    const weatherEmoji={'clear':'☀','rainy':'🌧','stormy':'⛈','drought':'🌵','blizzard':'❄'};
+    const wEmoji=weatherEmoji[game.weather.current]||'?';
+    ctx.fillStyle='#88aacc'; ctx.fillText(wEmoji+' '+game.weather.current.toUpperCase(),8,y); y+=lh;
+    ctx.fillStyle='#778899'; ctx.fillText('⏱ Tick: '+game.tick,8,y); y+=lh;
+    const rel=game.factions.getPlayerRelation(game);
+    const relColor={Allied:'#44ff88',Friendly:'#88ff44',Neutral:'#aaaaaa',Cold:'#ffaa44',Hostile:'#ff4444'}[rel]||'#aaa';
+    ctx.fillStyle=relColor; ctx.fillText('⚔ Status: '+rel,8,y); y+=lh;
+    if (game.invertedGravity) {
+      ctx.fillStyle='#ff4488'; ctx.font='bold 11px monospace';
+      ctx.fillText('⚠ INVERTED GRAVITY!',8,y); y+=lh;
+    }
+    ctx.fillStyle='#3a2060'; ctx.fillText('──────────────────',8,y); y+=lh;
+    // Factions
+    ctx.fillStyle='#ddaa44'; ctx.font='bold 11px monospace'; ctx.fillText('⚑ FACTIONS',8,y); y+=lh;
     ctx.font='11px monospace';
     for (const f of FACTIONS) {
       const rel=game.factions.getRelation(f.id,game.playerFaction>=0?game.playerFaction:0);
       const rs=rel>0.7?'Allied':rel>0.2?'Friendly':rel>-0.2?'Neutral':rel>-0.5?'Cold':'Hostile';
-      ctx.fillStyle=f.color; ctx.fillText('['+f.shortName+']',10,y);
-      ctx.fillStyle='#aaa'; ctx.fillText(rs,85,y); y+=lh;
+      const rc={Allied:'#44ff88',Friendly:'#88ff44',Neutral:'#aaaaaa',Cold:'#ffaa44',Hostile:'#ff4444'}[rs];
+      ctx.fillStyle=f.color; ctx.fillText(f.shortName,8,y);
+      ctx.fillStyle=rc; ctx.fillText(rs,80,y); y+=lh;
     }
-    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
-    ctx.fillStyle='#ccaa44'; ctx.font='bold 11px monospace'; ctx.fillText('INVENTORY:',10,y); y+=lh;
+    ctx.fillStyle='#3a2060'; ctx.fillText('──────────────────',8,y); y+=lh;
+    // Inventory
+    ctx.fillStyle='#ddaa44'; ctx.font='bold 11px monospace'; ctx.fillText('🎒 INVENTORY',8,y); y+=lh;
     ctx.font='11px monospace';
     const inv=ecs.getComponent(game.playerId,'Inventory');
     if (inv) {
       const items=inv.list();
-      if (!items.length) { ctx.fillStyle='#555'; ctx.fillText('(empty)',10,y); y+=lh; }
+      if (!items.length) { ctx.fillStyle='#554466'; ctx.fillText('(empty)',8,y); y+=lh; }
       else for (const [item,count] of items) {
-        if (y>H-90) break;
-        ctx.fillStyle='#aaccaa'; ctx.fillText('- '+item+' x'+count,10,y); y+=lh;
+        if (y>H-100) break;
+        ctx.fillStyle='#aaddaa'; ctx.fillText('▸ '+item+' ×'+count,8,y); y+=lh;
       }
     }
-    ctx.fillStyle='#333'; ctx.fillText('─────────────────',10,y); y+=lh;
-    ctx.fillStyle='#ccaa44'; ctx.font='bold 11px monospace'; ctx.fillText('LOG:',10,y); y+=lh;
+    ctx.fillStyle='#3a2060'; ctx.fillText('──────────────────',8,y); y+=lh;
+    // Log
+    ctx.fillStyle='#ddaa44'; ctx.font='bold 11px monospace'; ctx.fillText('📜 LOG',8,y); y+=lh;
     ctx.font='10px monospace';
-    const msgs=game.messages.slice(-10);
+    const msgs=game.messages.slice(-8);
     for (const msg of msgs) {
-      if (y>H-30) break;
-      for (const line of this.wrapText(msg,26)) {
-        if (y>H-30) break;
-        ctx.fillStyle='#88aacc'; ctx.fillText(line,10,y); y+=13;
+      if (y>H-40) break;
+      for (const line of this.wrapText(msg,28)) {
+        if (y>H-40) break;
+        ctx.fillStyle='#8899bb'; ctx.fillText(line,8,y); y+=13;
       }
     }
+    // Active events
     if (game.events.activeEvents.length>0) {
-      ctx.fillStyle='#ff4400'; ctx.font='bold 10px monospace';
-      ctx.fillText('EVT: '+game.events.activeEvents.map(e=>e.type).join(', ').slice(0,28),10,H-20);
+      ctx.fillStyle='#ff5500'; ctx.font='bold 10px monospace';
+      ctx.fillText('⚡ '+game.events.activeEvents.map(e=>e.type).join(', ').slice(0,26),6,H-22);
     }
-    ctx.fillStyle='#334455'; ctx.font='9px monospace';
-    ctx.fillText('[1]Terraform [2]Signal [3]Build [4]Event',5,H-6);
+    // Ability hints
+    ctx.fillStyle='#2a3050'; ctx.font='9px monospace';
+    ctx.fillText('[1]Terraform [2]Signal [3]Build [4]Event',5,H-7);
   }
   drawBar(ctx,x,y,w,h,fill,fc,bg) {
+    // Bar background
     ctx.fillStyle=bg; ctx.fillRect(x,y,w,h);
-    ctx.fillStyle=fc; ctx.fillRect(x,y,Math.floor(w*Math.max(0,Math.min(1,fill))),h);
-    ctx.strokeStyle='#444'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+    // Bar fill with inner glow
+    const fillW=Math.floor(w*Math.max(0,Math.min(1,fill)));
+    if (fillW>0) {
+      const grad=ctx.createLinearGradient(x,y,x,y+h);
+      grad.addColorStop(0,fc); grad.addColorStop(1,this.darken(fc,0.5));
+      ctx.fillStyle=grad; ctx.fillRect(x,y,fillW,h);
+      // Shine
+      ctx.fillStyle='rgba(255,255,255,0.15)'; ctx.fillRect(x,y,fillW,Math.floor(h/2));
+    }
+    ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.strokeRect(x,y,w,h);
+  }
+  darken(hex,factor) {
+    const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+    return 'rgb('+Math.floor(r*factor)+','+Math.floor(g*factor)+','+Math.floor(b*factor)+')';
   }
   wrapText(text,maxLen) {
     if (!text) return [''];
@@ -992,8 +1293,10 @@ class Game {
     this.createNPCs(40+Math.floor(this.rng()*20));
     MemoryFractures.loadAndApply(this,this.ecs,seed);
     this.addMessage('Welcome to Entropy Engine!');
-    this.addMessage('WASD/Arrows: Move | E: Interact | C: Craft');
-    this.addMessage('1-4: Abilities | M: Map | P: Pause | /: Help');
+    this.addMessage('You are "@" — explore the world, survive chaos!');
+    this.addMessage('WASD/Arrows: Move | E: Interact | /: Help');
+    this.addMessage('Tip: Visit SETTLEMENTS (⊞) to trade for resources.');
+    this.addMessage('Tip: Press [/] or tap Help for a full guide.');
   }
   createPlayer() {
     let px=Math.floor(CONFIG.WORLD_W/2), py=Math.floor(CONFIG.WORLD_H/2);
@@ -1218,7 +1521,143 @@ class Game {
   }
 }
 
-// === MINIMAP ===
+// === TUTORIAL SYSTEM ===
+const TUTORIAL_STEPS = [
+  {
+    icon: '🌍',
+    title: 'Welcome to Entropy Engine!',
+    body: `You are a lone survivor in a <b>living, breathing world</b> that is constantly changing.
+
+Four factions war for dominance, weather shifts, fires spread, and an invisible force called <em>Entropy</em> bends reality itself.
+
+<b>Your goal:</b> Explore, survive, and shape the world — for as long as you can!`
+  },
+  {
+    icon: '🧭',
+    title: 'How to Move',
+    body: `Move your character <b>@</b> around the map using:
+• <b>WASD</b> or <b>Arrow Keys</b> on keyboard
+• The <b>D-Pad</b> buttons at the bottom on mobile
+
+Different terrains slow you down or block you:
+• <em>Mountains ▲</em> — impassable, go around
+• <em>Shallow water ~</em> — passable but drains energy
+• <em>Roads ═</em> — fast travel, use them!`
+  },
+  {
+    icon: '🗺',
+    title: 'The World Map',
+    body: `The world is a <b>100×70 tile map</b> with many terrain types:
+• <em>Plains ·</em> — open grassland, safe
+• <em>Forest ♣</em> — trees, can catch fire!
+• <em>Settlement ⊞</em> — trade with villagers here
+• <em>Ruins ⌂</em> — scavenge for useful items
+• <em>Anomaly ✦</em> — mysterious energy zones
+• <em>Desert ∴</em> — harsh but passable
+
+Press <b>[M]</b> to open the full world map at any time!`
+  },
+  {
+    icon: '⚔',
+    title: 'Factions & NPCs',
+    body: `Four <b>factions</b> roam the world and interact with each other:
+• <em>Verdant Alliance</em> — forest/plains dwellers
+• <em>Iron Republic</em> — mountain/hill folk
+• <em>Scavenger Horde</em> — raiders and scavengers
+• <em>Mystic Order</em> — anomaly seekers
+
+Press <b>[E]</b> near an NPC to talk. Stand on <b>Settlements</b> and press <b>[E]</b> to trade.
+
+Watch the <b>panel on the right</b> to see faction relationships!`
+  },
+  {
+    icon: '🌀',
+    title: 'The Entropy Meter',
+    body: `The <b>Entropy Meter</b> is the heart of the game:
+• It <em>rises</em> when the world is calm (no fires, no wars)
+• At <b>80%</b> — reality starts glitching: fires ignite, NPCs rebel
+• At <b>100%</b> — <b>ENTROPY SURGE!</b> Tiles warp, chaos erupts
+
+Keep the world chaotic to slow Entropy buildup — or let it surge for drama!
+
+Use <b>Ability 4</b> to trigger random events on purpose.`
+  },
+  {
+    icon: '⚗',
+    title: 'Crafting & Abilities',
+    body: `Press <b>[C]</b> to craft items from your inventory:
+• <em>Wood + Stone</em> → fire_starter
+• <em>Iron + Wood</em> → machine_part
+
+Press <b>[1][2][3][4]</b> for special abilities:
+• <b>1</b> — Terraform terrain (costs 20 energy)
+• <b>2</b> — Signal a faction (costs 15 energy)
+• <b>3</b> — Build a machine (needs machine_part)
+• <b>4</b> — Trigger a world event (costs 25 energy)
+
+Resources drop randomly as you explore!`
+  },
+  {
+    icon: '💀',
+    title: 'Survival Tips',
+    body: `• Your <em>HP</em> drops in fires — avoid fire tiles!
+• Your <em>Energy</em> slowly recharges over time
+• Visit <em>Anomalies ✦</em> for a big energy boost (+30)
+• Raiders attack on sight — flee or avoid them
+• Watch the <b>LOG</b> panel for important events
+• If you die, your run is saved and some NPCs will <em>remember you</em> next game!
+
+<b>Press [/] anytime for the full help guide.</b>
+
+<em>Good luck, survivor. The Entropy awaits. ✦</em>`
+  }
+];
+
+class TutorialSystem {
+  constructor() {
+    this.step=0;
+    this.overlay=document.getElementById('tutorialOverlay');
+    this.stepEl=document.getElementById('tutStep');
+    this.dotsEl=document.getElementById('tutDots');
+    this.iconEl=document.getElementById('tutIcon');
+    this.titleEl=document.getElementById('tutTitle');
+    this.bodyEl=document.getElementById('tutBody');
+    document.getElementById('tutNext').addEventListener('click',()=>this.next());
+    document.getElementById('tutPrev').addEventListener('click',()=>this.prev());
+    // Build dots
+    for (let i=0;i<TUTORIAL_STEPS.length;i++) {
+      const d=document.createElement('div'); d.className='tutorial-dot'; this.dotsEl.appendChild(d);
+    }
+  }
+  show() { this.step=0; this.render(); this.overlay.classList.add('visible'); }
+  hide() { this.overlay.classList.remove('visible'); }
+  next() {
+    if (this.step<TUTORIAL_STEPS.length-1) { this.step++; this.render(); }
+    else {
+      this.hide();
+      // If title screen is showing, start a new run
+      if (gameState.state==='TITLE') { startNewRun(null); }
+    }
+  }
+  prev() { if (this.step>0) { this.step--; this.render(); } }
+  render() {
+    const s=TUTORIAL_STEPS[this.step];
+    const total=TUTORIAL_STEPS.length;
+    this.stepEl.textContent='STEP '+(this.step+1)+' / '+total;
+    this.iconEl.textContent=s.icon;
+    this.titleEl.textContent=s.title;
+    this.bodyEl.innerHTML=s.body;
+    document.querySelectorAll('.tutorial-dot').forEach((d,i)=>{
+      d.classList.toggle('active',i===this.step);
+    });
+    const prevBtn=document.getElementById('tutPrev');
+    const nextBtn=document.getElementById('tutNext');
+    prevBtn.style.visibility=this.step===0?'hidden':'visible';
+    nextBtn.textContent=this.step===total-1?'▶ Play!':'Next ▶';
+  }
+}
+
+const tutorial=new TutorialSystem();
 class MiniMap {
   constructor() {
     this.canvas=document.createElement('canvas');
@@ -1329,27 +1768,33 @@ function startNewRun(seed) {
 function showTitle() {
   let scores=[];
   try { scores=JSON.parse(localStorage.getItem('entropyScores')||'[]'); } catch(e) {}
-  const sh=scores.slice(0,5).map((s,i)=>'<div class="score-entry">#'+(i+1)+' &mdash; Tick: <b>'+s.tick+'</b> | Events: '+s.events+' | Seed: '+s.seed+'</div>').join('');
+  const sh=scores.slice(0,5).map((s,i)=>`<div class="score-entry">#${i+1} &mdash; Survived <b>${s.tick}</b> ticks | ${s.events} events | Seed: ${s.seed}</div>`).join('');
   document.getElementById('overlay').innerHTML=`
     <div class="overlay-box">
-      <pre> ___ _  _ _____ ___  ___  _____   __
-| __| \| |_   _| _ \/ _ \| _ \ \ / /
-| _|| .\` | | | |   / (_) |  _/ \ V /
-|___|_|\_| |_| |_|_\\___/|_|   |_|
+      <pre style="color:#9955dd;font-size:9px;line-height:1.4"> ___ _  _ _____ ___  ___  _____   __
+| __| \\| |_   _| _ \\/ _ \\| _ \\ \\ / /
+| _|| .\` | | | |   / (_) |  _/ \\ V /
+|___|_|\\_| |_| |_|_\\\\___/|_|   |_|
  ___ _  _  ___ ___ _  _ ___
-| __| \| |/ __|_ _| \| | __|
+| __| \\| |/ __|_ _| \\| | __|
 | _|| .\` | (_ || || .\` | _|
-|___|_|\_|\___|___|_|\_|___|</pre>
-      <p style="color:#cc88ff;font-size:15px;margin:6px 0;">A Roguelike Simulation of Emergent Chaos</p>
-      <br>
-      <p>Enter seed (leave blank for random):</p>
+|___|_|\\_|\\___|___|_|\\_|___|</pre>
+      <p style="color:#cc88ff;font-size:14px;margin:4px 0 12px;">A Roguelike Simulation of Emergent Chaos</p>
+      <div class="tip-box" style="text-align:left;margin:0 0 12px;">
+        <b style="color:#ffdd88;">What is this game?</b><br>
+        You are a lone survivor on a living world map. Explore terrain, trade with
+        settlements, interact with faction NPCs, craft tools, and manage the mysterious
+        <b style="color:#cc88ff;">Entropy Meter</b> — a force that warps reality when it peaks.
+        Survive as many ticks as you can!
+      </div>
+      <p style="color:#aaaacc;font-size:12px;margin-bottom:8px;">Enter a seed number (or leave blank for a random world):</p>
       <input type="number" id="seedInput" placeholder="random seed" min="0">
       <br><br>
-      <button id="btnStartRun">&#9654; START NEW RUN</button>
+      <button id="btnStartRun" style="font-size:15px;padding:12px 28px;">▶ START NEW RUN</button>
+      <button id="btnTutorial" style="font-size:13px;background:linear-gradient(135deg,#1a2a1a,#0e1a0e);border-color:#447744;color:#88cc88;">📖 HOW TO PLAY</button>
       <br><br>
-      ${scores.length>0?'<p style="color:#664499;margin-bottom:4px;font-size:12px;">HIGH SCORES:</p>'+sh:''}
-      <br>
-      <p style="color:#445566;font-size:11px;">WASD/Arrows: Move | E: Interact | C: Craft | 1-4: Abilities | M: Map | /: Help</p>
+      ${scores.length>0?'<p style="color:#664499;margin-bottom:4px;font-size:11px;letter-spacing:1px;">🏆 HIGH SCORES</p>'+sh+'<br>':''}
+      <p style="color:#3a2a55;font-size:10px;">WASD/Arrows: Move &nbsp;|&nbsp; E: Interact &nbsp;|&nbsp; C: Craft &nbsp;|&nbsp; 1-4: Abilities &nbsp;|&nbsp; M: Map &nbsp;|&nbsp; /: Help</p>
     </div>`;
   document.getElementById('overlay').style.display='flex';
   gameState.state='TITLE';
@@ -1357,24 +1802,37 @@ function showTitle() {
     const v = document.getElementById('seedInput').value;
     startNewRun(v !== '' ? parseInt(v, 10) : null);
   });
+  document.getElementById('btnTutorial').addEventListener('click', function() {
+    hideOverlay(); tutorial.show();
+  });
 }
 
 function showGameOver() {
   const game=gameState.game; if (!game) return;
   const gameSeed=game.seed;
+  const ticks=game.tick;
+  const grade=ticks>500?'S':ticks>200?'A':ticks>100?'B':ticks>50?'C':'D';
+  const gradeColor={S:'#ffdd00',A:'#ff8800',B:'#88ff44',C:'#44aaff',D:'#aa88cc'}[grade];
   document.getElementById('overlay').innerHTML=`
     <div class="overlay-box">
-      <h2>&#9889; YOU HAVE FALLEN &#9889;</h2>
-      <p style="color:#664499;font-size:12px;">Run #${gameState.runNumber}</p>
+      <h2>⚡ YOU HAVE FALLEN ⚡</h2>
+      <p style="color:#664499;font-size:12px;letter-spacing:1px;">RUN #${gameState.runNumber}</p>
       <br>
-      <p>Ticks Survived: <span style="color:#cc88ff">${game.tick}</span></p>
-      <p>Events Witnessed: <span style="color:#cc88ff">${game.events.eventHistory.length}</span></p>
-      <p>Entropy at Death: <span style="color:#ff8800">${Math.floor(game.entropy)}%</span></p>
-      <p>Seed: <span style="color:#664499">${gameSeed}</span></p>
+      <p style="font-size:32px;margin:8px 0;"><span style="color:${gradeColor};text-shadow:0 0 20px ${gradeColor};">${grade}</span></p>
+      <p>Ticks Survived: <span style="color:#cc88ff;font-weight:bold;">${game.tick}</span></p>
+      <p>Events Witnessed: <span style="color:#cc88ff;">${game.events.eventHistory.length}</span></p>
+      <p>Entropy at Death: <span style="color:#ff8800;">${Math.floor(game.entropy)}%</span></p>
+      <p style="color:#554466;font-size:11px;margin-top:4px;">Seed: ${gameSeed}</p>
       <br>
-      <button id="btnNewRun">&#8634; New Run</button>
-      <button id="btnSameSeed">&#8634; Same Seed</button>
-      <button id="btnTitle">&#8962; Title</button>
+      <div class="tip-box" style="font-size:12px;">
+        ${game.tick<50 ? '💡 <b>Tip:</b> Visit green <b>Settlements ⊞</b> and press <b>[E]</b> to trade for resources!' :
+          game.tick<150 ? '💡 <b>Tip:</b> Use <b>[C]</b> to craft! Wood + Stone = fire_starter. Iron + Wood = machine_part.' :
+          '⚡ The world will remember your deeds in the next run...'}
+      </div>
+      <br>
+      <button id="btnNewRun">↺ New Run</button>
+      <button id="btnSameSeed">↺ Same Seed</button>
+      <button id="btnTitle">⌂ Title</button>
     </div>`;
   document.getElementById('overlay').style.display='flex';
   document.getElementById('btnNewRun').addEventListener('click', () => startNewRun(null));
@@ -1384,28 +1842,50 @@ function showGameOver() {
 
 function showHelp() {
   document.getElementById('overlay').innerHTML=`
-    <div class="overlay-box" style="text-align:left;min-width:480px;">
-      <h2 style="text-align:center;">HELP</h2>
+    <div class="overlay-box" style="text-align:left;min-width:340px;max-width:580px;">
+      <h2 style="text-align:center;">📖 HOW TO PLAY</h2>
       <br>
-      <p style="color:#ccaa44;font-weight:bold;">MOVEMENT</p>
-      <p>WASD or Arrow Keys to move through the world.</p>
+      <p class="help-section">🎯 GOAL</p>
+      <p>Survive as many ticks as possible. Explore the world, trade, craft, and manage the Entropy Meter.</p>
+
+      <p class="help-section">🧭 MOVEMENT</p>
+      <p><span class="help-key">WASD</span> or <span class="help-key">Arrow Keys</span> — move one tile in any direction</p>
+      <p style="color:#777;font-size:12px;">Mountains block movement. Shallow water & swamps drain energy.</p>
+
+      <p class="help-section">🗺 TERRAIN GUIDE</p>
+      <p>· Plains — safe open land &nbsp;|&nbsp; ♣ Forest — can catch fire!<br>
+         ▲ Mountain — impassable &nbsp;|&nbsp; ~ Shallow — slow, drains energy<br>
+         ⊞ Settlement — trade here &nbsp;|&nbsp; ⌂ Ruins — scavenge for loot<br>
+         ✦ Anomaly — energy boost &nbsp;|&nbsp; ❄ Ice — slows movement<br>
+         ═ Road — fast travel &nbsp;|&nbsp; ∴ Desert — passable, hot</p>
+
+      <p class="help-section">⚡ ACTIONS</p>
+      <p><span class="help-key">E</span> — Interact: talk to NPCs, trade at Settlements, touch Anomalies, scavenge Ruins</p>
+      <p><span class="help-key">C</span> — Craft: Wood+Stone=fire_starter | Iron+Wood=machine_part</p>
+      <p><span class="help-key">M</span> — Toggle world map overview</p>
+      <p><span class="help-key">P</span> — Pause / Resume the simulation</p>
+
+      <p class="help-section">🔮 ABILITIES (cost energy)</p>
+      <p><span class="help-key">1</span> <span style="color:#aaa">[20en]</span> Terraform — cycle terrain type at your position</p>
+      <p><span class="help-key">2</span> <span style="color:#aaa">[15en]</span> Signal Faction — improve relations with nearest faction</p>
+      <p><span class="help-key">3</span> <span style="color:#aaa">[30en]</span> Build Machine — place a machine (needs machine_part)</p>
+      <p><span class="help-key">4</span> <span style="color:#aaa">[25en]</span> Trigger Event — force a random dramatic world event</p>
+
+      <p class="help-section">🌀 ENTROPY METER</p>
+      <p>Rises when the world is calm. At <b style="color:#ff8800">80%</b>: minor chaos begins.
+      At <b style="color:#ff3300">100%</b>: <b>ENTROPY SURGE</b> — tiles warp, fires erupt, reality breaks!</p>
+
+      <p class="help-section">💡 SURVIVAL TIPS</p>
+      <div class="tip-box">
+        • Visit <b>Settlements ⊞</b> with <b>[E]</b> to get free wood & stone<br>
+        • Touch <b>Anomalies ✦</b> with <b>[E]</b> for +30 energy<br>
+        • Scavenge <b>Ruins ⌂</b> for iron, artifacts, machine parts<br>
+        • Raiders will chase you — run or avoid them<br>
+        • Craft a <b>fire_starter</b> then use <b>[C]</b> near forest to ignite<br>
+        • Your past actions affect NPCs in future runs!
+      </div>
       <br>
-      <p style="color:#ccaa44;font-weight:bold;">ACTIONS</p>
-      <p><b>E</b> &mdash; Interact: talk to NPCs, loot ruins/settlements, touch anomalies</p>
-      <p><b>C</b> &mdash; Craft: wood+stone=fire_starter | iron+wood=machine_part</p>
-      <p><b>M</b> &mdash; Toggle world map</p>
-      <p><b>P</b> &mdash; Pause/Resume</p>
-      <br>
-      <p style="color:#ccaa44;font-weight:bold;">ABILITIES (cost energy)</p>
-      <p><b>1</b> [20en] Terraform - Cycle terrain at your position</p>
-      <p><b>2</b> [15en] Signal Faction - Improve faction relations</p>
-      <p><b>3</b> [30en] Build Machine - Place a machine (needs machine_part)</p>
-      <p><b>4</b> [25en] Trigger Event - Force a random world event</p>
-      <br>
-      <p style="color:#ccaa44;font-weight:bold;">ENTROPY METER</p>
-      <p>Rises when world is stable. At 80%: minor chaos. At 100%: SURGE!</p>
-      <br>
-      <button id="btnCloseHelp" style="width:100%;margin-top:8px;">CLOSE [Esc]</button>
+      <button id="btnCloseHelp" style="width:100%;">✕ Close [Esc]</button>
     </div>`;
   document.getElementById('overlay').style.display='flex';
   document.getElementById('btnCloseHelp').addEventListener('click', hideOverlay);
@@ -1419,6 +1899,72 @@ panelCanvas.width=CONFIG.PANEL_W; panelCanvas.height=CONFIG.CANVAS_H;
 
 const renderer=new Renderer(gameCanvas,panelCanvas);
 const miniMap=new MiniMap();
+
+// === CANVAS SCALING FOR MOBILE ===
+function applyScale() {
+  const totalW=CONFIG.CANVAS_W+CONFIG.PANEL_W;
+  const totalH=CONFIG.CANVAS_H+CONFIG.BOTTOM_BAR_H;
+  const availW=window.innerWidth;
+  const availH=window.innerHeight;
+  // Leave room for touch controls on mobile
+  const hasTouchControls=window.matchMedia('(pointer:coarse)').matches||availW<900;
+  const touchH=hasTouchControls?160:0;
+  const scaleX=availW/totalW;
+  const scaleY=(availH-touchH)/totalH;
+  const scale=Math.min(scaleX,scaleY,1); // never upscale
+  const wrapper=document.getElementById('scaleWrapper');
+  wrapper.style.transform='scale('+scale+')';
+  wrapper.style.transformOrigin='top left';
+  // Center horizontally
+  const scaledW=totalW*scale;
+  wrapper.style.marginLeft=Math.max(0,Math.floor((availW-scaledW)/2))+'px';
+}
+window.addEventListener('resize',applyScale);
+applyScale();
+
+// === TOUCH CONTROLS ===
+function bindTouchBtn(id, action) {
+  const el=document.getElementById(id); if (!el) return;
+  const fire=e=>{
+    e.preventDefault();
+    action();
+  };
+  el.addEventListener('touchstart',fire,{passive:false});
+  el.addEventListener('mousedown',fire);
+}
+// Continuous press for D-pad
+function bindDpadBtn(id, dx, dy) {
+  const el=document.getElementById(id); if (!el) return;
+  let interval=null;
+  const start=e=>{
+    e.preventDefault();
+    if (gameState.game) gameState.game.movePlayer(dx,dy);
+    interval=setInterval(()=>{ if (gameState.game) gameState.game.movePlayer(dx,dy); },CONFIG.DPAD_REPEAT_MS);
+  };
+  const stop=e=>{ clearInterval(interval); interval=null; };
+  el.addEventListener('touchstart',start,{passive:false});
+  el.addEventListener('mousedown',start);
+  el.addEventListener('touchend',stop);
+  el.addEventListener('touchcancel',stop);
+  el.addEventListener('mouseup',stop);
+  el.addEventListener('mouseleave',stop);
+}
+bindDpadBtn('tcUp',   0,-1);
+bindDpadBtn('tcDown', 0, 1);
+bindDpadBtn('tcLeft',-1, 0);
+bindDpadBtn('tcRight',1, 0);
+bindTouchBtn('tcInteract',()=>{ if(gameState.game) gameState.game.interact(); });
+bindTouchBtn('tcCraft',   ()=>{ if(gameState.game) gameState.game.craft(); });
+bindTouchBtn('tcMap',     ()=>{ if(gameState.game&&gameState.game.world) miniMap.toggle(gameState.game.world,gameState.game); });
+bindTouchBtn('tcPause',   ()=>{
+  const g=gameState.game; if (!g) return;
+  g.state=g.state==='PAUSED'?'PLAYING':'PAUSED';
+  g.addMessage(g.state==='PAUSED'?'Game paused.':'Game resumed.');
+});
+bindTouchBtn('tcAbl1',()=>{ if(gameState.game) gameState.game.useAbility(0); });
+bindTouchBtn('tcAbl2',()=>{ if(gameState.game) gameState.game.useAbility(1); });
+bindTouchBtn('tcAbl3',()=>{ if(gameState.game) gameState.game.useAbility(2); });
+bindTouchBtn('tcAbl4',()=>{ if(gameState.game) gameState.game.useAbility(3); });
 
 function renderLoop() {
   if ((gameState.state==='PLAYING'||gameState.state==='PAUSED')&&gameState.game)
